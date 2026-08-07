@@ -1,4 +1,4 @@
-# Dyalog APL language server — v0.3 (experimental preview)
+# Dyalog APL language server — v0.5 (experimental preview)
 
 > **Status: experimental.** This is a working proof of concept, not a finished
 > tool. It does three things well and deliberately does not attempt the rest —
@@ -206,7 +206,8 @@ but start a process.
 
 Issues and pull requests welcome. The two most useful contributions, in order:
 
-1. Regenerate the keyboard mapping table in `src/glyphs.ts` from Dyalog's
-   authoritative keyboard definition, replacing the hand-typed version.
-2. `]Link` project awareness, which unlocks go-to-definition, find-references
+1. `]Link` project awareness, which unlocks go-to-definition, find-references
    and rename without needing an interpreter.
+2. Document outline: implement `textDocument/documentSymbol` so the breadcrumb
+   bar and Ctrl+Shift+O work. Needs tradfn header and dfn assignment parsing,
+   no interpreter required. A good first contribution.

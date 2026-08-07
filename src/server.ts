@@ -66,7 +66,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       },
       hoverProvider: true
     },
-    serverInfo: { name: 'dyalog-apl-language-server', version: '0.3.0' }
+    serverInfo: { name: 'dyalog-apl-language-server', version: '0.5.0' }
   };
 });
 
