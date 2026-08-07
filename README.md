@@ -2,8 +2,7 @@
 
 > **Status: experimental.** This is a working proof of concept, not a finished
 > tool. It does three things well and deliberately does not attempt the rest —
-> see "What it deliberately does not do". Not affiliated with Dyalog Ltd.
-> Built in personal time and offered to the APL community as-is.
+> see "What it deliberately does not do". 
 
 ## Which APL?
 
