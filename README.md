@@ -154,7 +154,7 @@ full set, so it should be generated rather than curated.
 
 ## Credit and things to reuse
 
-The prior art is Gil Athoraya's `OptimaSystems/apl-language-server` and its
+The prior work is Gil Athoraya's `OptimaSystems/apl-language-server` and its
 companion `vscode-apl-language-client`, both from 2018. 
 
 ## Layout
