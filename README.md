@@ -168,11 +168,12 @@ lists used by name search, and the system name list, which is partial.
 Hover deliberately contains no documentation links, since hand-written URLs rot.
 That wants a generated index of the documentation site.
 
-## Prior art
+## Acknowledgements
 
-`OptimaSystems/apl-language-server` and `vscode-apl-language-client` (2018), by
-Gil Athoraya, implement LSP for APL inside a Dyalog process. This project is a
-separate implementation rather than a fork, and shares no code with it.
+Gil Athoraya got here first: `OptimaSystems/apl-language-server` and
+`vscode-apl-language-client` (2018) implement LSP for APL inside a Dyalog
+process. This project is a separate implementation rather than a fork, and
+shares no code with it.
 
 ## Licence
 
