@@ -177,7 +177,7 @@ but start a process.
 
 ## Open decisions
 
-- **Licence.** MIT, written in personal time. Not affiliated with Dyalog Ltd.
+- **Licence.** MIT.
 - **The language id is `apl`, not `dyalog-apl`.** The editor displays "Dyalog
   APL", but the underlying id stays generic so that existing editor settings and
   file associations keep working. The consequence is that installing this
