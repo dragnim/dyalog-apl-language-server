@@ -1,0 +1,124 @@
+{
+  "name": "dyalog-apl-language-server",
+  "displayName": "Dyalog APL language server",
+  "description": "Syntax highlighting, glyph completion, hover documentation and diagnostics for Dyalog APL, in any editor that speaks LSP",
+  "version": "0.5.0",
+  "publisher": "dragnim",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "bin": {
+    "dyalog-apl-language-server": "./bin/dyalog-apl-language-server.js"
+  },
+  "activationEvents": [
+    "onLanguage:apl"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "apl",
+        "aliases": [
+          "Dyalog APL",
+          "APL",
+          "apl"
+        ],
+        "extensions": [
+          ".apl",
+          ".aplf",
+          ".apla",
+          ".aplc",
+          ".apli",
+          ".apln",
+          ".aplo",
+          ".dyalog"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Dyalog APL",
+      "properties": {
+        "dyalogApl.prefixKey": {
+          "type": "string",
+          "default": "`",
+          "description": "Character that starts glyph completion. Typed twice, it searches glyphs by name."
+        },
+        "dyalogApl.diagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report unbalanced brackets and unclosed character literals."
+        },
+        "dyalogApl.keyboardLocale": {
+          "type": "string",
+          "default": "en_US",
+          "enum": [
+            "da_DK",
+            "da_DK_Mac",
+            "de_DE",
+            "en_GB",
+            "en_GB_Mac",
+            "en_US",
+            "en_US_Mac",
+            "es_ES",
+            "fi_FI",
+            "fi_FI_Mac",
+            "fr_BE",
+            "fr_FR",
+            "it_IT"
+          ],
+          "description": "Keyboard layout the prefix keys follow. Layouts differ: \u2262 is prefix-@ on a British keyboard and prefix-\" on a US one."
+        }
+      }
+    },
+    "grammars": [
+      {
+        "language": "apl",
+        "scopeName": "source.apl.dyalog",
+        "path": "./syntaxes/apl.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "smoke": "node test/smoke.mjs",
+    "grammar": "node test/highlight.mjs",
+    "test": "npm run smoke && npm run grammar",
+    "gen:keyboard": "node tools/gen-keyboard.mjs"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dragnim/dyalog-apl-language-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dragnim/dyalog-apl-language-server/issues"
+  },
+  "homepage": "https://github.com/dragnim/dyalog-apl-language-server#readme",
+  "preview": true,
+  "keywords": [
+    "apl",
+    "dyalog",
+    "dyalog apl",
+    "language server",
+    "lsp",
+    "array programming"
+  ]
+}

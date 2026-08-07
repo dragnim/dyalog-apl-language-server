@@ -1,0 +1,108 @@
+{
+  "name": "Dyalog APL",
+  "scopeName": "source.apl.dyalog",
+  "patterns": [
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#zilde"
+    },
+    {
+      "include": "#system-name"
+    },
+    {
+      "include": "#control-word"
+    },
+    {
+      "include": "#label"
+    },
+    {
+      "include": "#dfn-argument"
+    },
+    {
+      "include": "#assignment"
+    },
+    {
+      "include": "#branch"
+    },
+    {
+      "include": "#operator"
+    },
+    {
+      "include": "#function"
+    },
+    {
+      "include": "#separator"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.lamp.apl",
+      "match": "⍝.*$"
+    },
+    "string": {
+      "name": "string.quoted.single.apl",
+      "begin": "'",
+      "end": "'(?!')",
+      "patterns": [
+        {
+          "name": "constant.character.escape.apl",
+          "match": "''"
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.apl",
+      "match": "(?<![A-Za-z0-9_∆⍙])¯?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE]¯?\\d+)?(?:[jJ]¯?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE]¯?\\d+)?)?"
+    },
+    "zilde": {
+      "name": "constant.language.zilde.apl",
+      "match": "⍬"
+    },
+    "system-name": {
+      "name": "support.function.system.apl",
+      "match": "⎕[A-Za-z]*|⍞"
+    },
+    "control-word": {
+      "name": "keyword.control.apl",
+      "match": "(?i):(?:AndIf|OrIf|ElseIf|Else|EndIf|If|EndWhile|While|Until|EndRepeat|Repeat|EndFor|InEach|In|For|EndSelect|CaseList|Case|Select|EndTrap|Trap|EndWith|With|EndHold|Hold|EndNamespace|Namespace|EndClass|Class|EndInterface|Interface|EndProperty|Property|EndSection|Section|Field|Access|Implements|Include|Return|Leave|Continue|GoTo|Signature)(?![A-Za-z])"
+    },
+    "label": {
+      "name": "entity.name.label.apl",
+      "match": "^\\s*[A-Za-z_∆⍙][A-Za-z0-9_∆⍙]*(?=:)"
+    },
+    "dfn-argument": {
+      "name": "variable.language.apl",
+      "match": "[⍺⍵⍶⍹∇]|##?(?![A-Za-z0-9_∆⍙])"
+    },
+    "assignment": {
+      "name": "keyword.operator.assignment.apl",
+      "match": "←"
+    },
+    "branch": {
+      "name": "keyword.control.flow.apl",
+      "match": "→"
+    },
+    "operator": {
+      "comment": "Higher-order functions: operators in APL's sense, which take functions as arguments.",
+      "name": "entity.name.type.apl",
+      "match": "[¨⍨⍣⍤⍥∘⌸⌺⍠⍛&@⌶/⌿\\\\⍀]"
+    },
+    "function": {
+      "comment": "Primitive functions.",
+      "name": "keyword.operator.apl",
+      "match": "[+\\-×÷*⍟⌹○!?|⌈⌊⊥⊤⊣⊢=≠≤<>≥≡≢∨∧⍱⍲↑↓⊂⊃⊆⌷⍋⍒⍳⍸∈∊⍷∪∩~,⍪⍴⌽⊖⍉⍕⍎]"
+    },
+    "separator": {
+      "name": "punctuation.separator.statement.apl",
+      "match": "⋄"
+    }
+  }
+}
