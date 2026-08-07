@@ -1,86 +1,74 @@
-# Dyalog APL language server — v0.5 (experimental preview)
+# Dyalog APL language server
 
-> **Status: experimental.** This is a working proof of concept, not a finished
-> tool. It does three things well and deliberately does not attempt the rest —
-> see "What it deliberately does not do". 
+Syntax highlighting, glyph completion, hover documentation and diagnostics for
+Dyalog APL, in any editor that speaks the Language Server Protocol.
 
-## Which APL?
+> **Status: experimental preview.** Working, but early. See
+> [Limitations](#limitations) for what it does not attempt.
 
-**Dyalog APL specifically.** APL is a family of languages, not one language, and
-the parts of it this server knows about are the Dyalog parts: the system names
-(`⎕NGET`, `⎕JSON`, `⎕SHELL`), the control structures (`:If`, `:EndFor`), the
-`]Link` file extensions, and the Dyalog prefix keyboard.
+Requires Node 18 or later. It does **not** require a Dyalog interpreter, so it
+works before you have installed one.
 
-Other implementations — GNU APL, APL2, APLX, Dzaima/APL, ngn/apl, and the wider
-array family such as BQN, Kap and Uiua — share many primitives, so hover
-documentation on `⍴` or `⌽` would be broadly right in any of them. Everything
-else would be wrong in ways that are worse than absent. Supporting another
-dialect properly means a variant of `src/glyphs.ts` and a decision about how much
-the two share, which is a real piece of work rather than a config flag. Pull
-requests welcome from anyone who wants their dialect in here.
+## Which APL
 
-## What this is
+Dyalog APL specifically. The dialect-specific parts it knows about are the system
+names (`⎕NGET`, `⎕JSON`, `⎕SHELL`), the control structures (`:If`, `:EndFor`),
+the `]Link` file extensions, and the Dyalog prefix keyboard.
 
-A standalone language server for Dyalog APL. It needs Node, and it does not need a
-Dyalog interpreter installed. That is the point: someone who has never written a
-line of APL can install this, open a file, and get glyph completion, hover
-documentation and syntax errors before they have downloaded anything else.
+Other implementations share many primitives, so hover documentation on `⍴` or `⌽`
+would be broadly correct elsewhere, but the rest would not. Supporting another
+dialect means a variant of `src/glyphs.ts` and a decision about how much the two
+share. Pull requests welcome.
 
-Not a fork of the 2018 work. That server is APL code running inside a Dyalog
-v17 process, shipped as a workspace, so there was nothing to carry across
-architecturally. See "Credit and things to reuse" below for what should be
-taken from it.
+Recognised file extensions: `.apl`, `.aplf`, `.apla`, `.aplc`, `.apli`, `.apln`,
+`.aplo`, `.dyalog`.
 
-## What works right now
+## Features
 
-**Glyph completion.** Type `` ` `` and the glyph list appears, filtered as you
-type, so `` `r `` gives `⍴`. Type `` `` `` (twice) and you get a name search
-instead, so ` ``rho ` also gives `⍴`. Every completion carries the Dyalog name
-and the monadic and dyadic meanings.
+**Syntax highlighting.** Comments, character literals, numbers, system names,
+control structures, labels and dfn arguments, with primitives coloured by
+category so functions and operators are visually distinct. It does not impose an
+editor font.
+
+**Glyph completion.** Type `` ` `` for the glyph list, filtered as you type, so
+`` `r `` gives `⍴`. Type it twice for a name search, so ` ``rho ` also gives `⍴`.
+Completions carry the official glyph name and the monadic and dyadic meanings.
 
 **System name completion.** Typing `⎕` offers system names with descriptions.
 
 **Control structure completion.** Typing `:` at the start of a statement offers
 `:If`, `:EndFor` and the rest.
 
-**Hover.** Put the cursor on a glyph and get its name, its monadic meaning, its
-dyadic meaning, and the keystroke to type it. Works on `⎕`-names too.
+**Hover.** The glyph name, its monadic and dyadic meanings, and the keystroke
+that produces it. Works on `⎕`-names too.
 
-**Syntax highlighting.** Comments, character literals, numbers, system names,
-control structures, labels, dfn arguments, and the primitives coloured by
-category so that functions and operators are visually distinct. Written from
-scratch rather than adapted from existing grammars, so its provenance is clean.
+**Diagnostics.** Unbalanced brackets and unclosed character literals. Brackets
+inside comments and strings are ignored, the doubled-quote escape is handled, and
+brackets balance across the whole file so multi-line array notation does not
+produce false errors.
 
-It deliberately does **not** force an editor font. Choosing the font is the
-user's business, and prior extensions that imposed one drew complaints.
+## Installing
 
-**Diagnostics.** Unbalanced brackets and unclosed character literals, reported
-as squiggles. It correctly ignores brackets inside comments and strings, and
-handles the doubled-quote escape. Brackets balance across the whole file rather
-than per line, so multi-line array notation does not produce false errors.
+### VS Code
 
-## Running it
+Download the `.vsix` from the [latest release][releases], then either:
 
 ```
-npm install
-npm run build
-npm run smoke     # drives the server over stdio and prints what it answers
-npm run grammar   # checks every rule in the syntax grammar
-npm run gen:keyboard  # regenerates the keyboard tables from RIDE
-npm test          # both of the above
+code --install-extension dyalog-apl-language-server-0.5.0.vsix
 ```
 
-`npm run grammar` is worth keeping in the habit: if one regex in the grammar is
-invalid, VS Code silently loads no grammar at all, with no error anywhere. The
-failure looks exactly like "highlighting isn't implemented yet".
+or, in VS Code, open the Extensions panel, choose **Install from VSIX…** from
+its `...` menu, and select the file.
 
-`npm run smoke` is the fastest way to see it working — it acts as an editor,
-sends real LSP requests, and prints the replies. No editor required.
+Not published to the VS Code Marketplace.
 
-In VS Code: open this folder and press F5. That launches a second VS Code with
-the extension loaded. Open any `.apl` or `.aplf` file.
+### Other editors
 
-In Neovim, to demonstrate the editor-agnostic claim:
+The server speaks LSP over stdio, so any LSP client can drive it. Clone the
+repository and run `npm install && npm run build`, then point your editor at
+`bin/dyalog-apl-language-server.js`.
+
+Neovim:
 
 ```lua
 vim.lsp.start({
@@ -90,115 +78,104 @@ vim.lsp.start({
 })
 ```
 
-Helix, Zed, Emacs (eglot) and Sublime take the same command. Nothing in the
-server knows which editor it is talking to.
+Helix, Zed, Emacs (eglot) and Sublime take the same command.
 
-## What it deliberately does not do
+## Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `dyalogApl.prefixKey` | `` ` `` | Character that starts glyph completion. Typed twice, it searches by name. |
+| `dyalogApl.keyboardLocale` | `en_US` | Keyboard layout the prefix keys follow. Thirteen locales available. |
+| `dyalogApl.diagnostics` | `true` | Report unbalanced brackets and unclosed character literals. |
+
+Layouts differ by locale: `≢` is prefix-`@` on a British keyboard and prefix-`"`
+on a US one.
+
+## Limitations
 
 Without a running interpreter the server cannot know what a name *is*. In
-`foo bar baz`, whether `foo` is a function or an array depends on things that
-may not be in the file. So there is no go-to-definition, no rename, and no
-"this is not a function" diagnostic yet. Everything it currently reports is
-something the interpreter would also reject.
+`foo bar baz`, whether `foo` is a function or an array depends on things that may
+not be in the file. So there is no go-to-definition, no rename, and no
+"this is not a function" diagnostic. Everything it does report is something the
+interpreter would also reject.
 
-That ceiling is raised in two later stages, neither of which requires throwing
-away any of this:
+Two later stages raise that ceiling without discarding any of this:
 
 1. **Project awareness.** Follow `]Link` conventions and treat a directory as a
-   namespace. That gives go-to-definition, find-references, rename and
-   unused-name warnings across a real project, still with no interpreter.
+   namespace, giving go-to-definition, find-references, rename and unused-name
+   warnings across a project — still with no interpreter.
 2. **Optional interpreter attach.** When a Dyalog process is available, ask it
-   for real name classes and values. Deep features light up; the zero-install
-   path keeps working for everyone else.
+   for real name classes and values, while the zero-install path keeps working
+   for everyone else.
 
-## Where the data comes from, and what is still unverified
+The language id is `apl` rather than `dyalog-apl`, so that existing editor
+settings and file associations keep working. Installing this alongside another
+extension that also claims `apl` will result in two grammars competing for the
+same language; use one or the other.
 
-Verified against Dyalog's own sources:
-
-- **Glyph characters** checked against RIDE's `src/bq.js`, which is generated
-  from Dyalog's IME definitions. This caught a real bug: an earlier version used
-  ∈ (U+2208) for membership where Dyalog uses ∊ (U+220A), so hover silently did
-  nothing on real source. The same check found sixteen missing glyphs, including
-  `≡`, `≢`, `⊆`, `⊤`, `⊥`, `@` and the ASCII primitives.
-- **Official glyph names and function names** from Dyalog's "Nomenclature:
-  Functions and Operators" cheat sheet, so hover says Circle Backslash and
-  Dyadic Transpose rather than something informal. That sheet documents v16.0,
-  so anything newer — Over, Behind, monadic Not Equal as Unique Mask — is not
-  covered by it and wants re-checking against a current source.
-
-- **The prefix keyboard mapping** is generated, not typed. RIDE stores four
-  strings per keyboard locale in `src/kbds.js`, indexed by scancode — unshifted,
-  shifted, APL, APL shifted — and builds its backtick map by pairing them.
-  `tools/gen-keyboard.mjs` performs the same walk and emits `src/keyboard.ts`
-  for all thirteen locales. Regenerate with `npm run gen:keyboard`.
-
-  This replaced 52 hand-typed guesses. For the record, 49 were right, `⍀` was
-  wrong (it is prefix-`.`, not prefix-`\`), two were meaningless, and 28 glyphs
-  with real keys had been left blank. Which is roughly the accuracy you should
-  expect from anything hand-typed, and the argument for generating it.
-
-  Layouts genuinely differ between locales: `≢` is prefix-`@` on a British
-  keyboard and prefix-`"` on a US one. The default is `en_US`; change it with
-  `dyalogApl.keyboardLocale`.
-
-Still unverified:
-
-- **Documentation links.** Still none, on purpose. Hover gives names and
-  meanings but links nowhere, because hand-pasted URLs rot. This wants a
-  generated index of the documentation site.
-- **The alias lists** used by name search are written from scratch. RIDE ships a
-  better set at `src/bq.js`.
-
-The system name list is partial for the same reason: the interpreter knows the
-full set, so it should be generated rather than curated.
-
-## Credit and things to reuse
-
-The prior work is Gil Athoraya's `OptimaSystems/apl-language-server` and its
-companion `vscode-apl-language-client`, both from 2018. 
-
-## Layout
+## Development
 
 ```
-syntaxes/          the TextMate grammar, for syntax highlighting
-src/keyboard.ts    GENERATED prefix keyboard tables, 13 locales
-tools/             the generator for the above
-src/glyphs.ts      glyph, system name and control word data
-src/server.ts      the server: completion, hover, diagnostics
-src/extension.ts   the VS Code client, which only launches the server
-bin/               stdio entry point for every other editor
-test/smoke.mjs     a minimal LSP client, for checking the server works
-test/highlight.mjs checks the grammar assigns the scopes it should
+npm install
+npm run build            # compile TypeScript into out/
+npm test                 # smoke test and grammar checks
+npm run smoke            # drive the server over stdio and print its replies
+npm run grammar          # check every rule in the syntax grammar
+npm run gen:keyboard     # regenerate the keyboard tables
 ```
 
-`src/server.ts` is the part that matters and is under 300 lines. Everything
-editor-specific lives in `src/extension.ts`, which is 50 lines and does nothing
+`npm run smoke` acts as an editor, sending real LSP requests and printing the
+replies, which is the quickest way to see the server working without an editor
+involved. In VS Code, F5 launches a second window with the extension loaded.
+
+`npm run grammar` is worth running after any change to the grammar: if a single
+regex in it is invalid, VS Code silently loads no grammar at all and reports no
+error, which looks identical to highlighting not being implemented.
+
+### Layout
+
+```
+src/server.ts        the server: completion, hover, diagnostics
+src/glyphs.ts        glyph, system name and control word data
+src/keyboard.ts      generated prefix keyboard tables, 13 locales
+src/extension.ts     the VS Code client, which only launches the server
+syntaxes/            the TextMate grammar
+bin/                 stdio entry point for other editors
+tools/gen-keyboard.mjs   generates src/keyboard.ts
+test/smoke.mjs       a minimal LSP client
+test/highlight.mjs   checks the grammar assigns the expected scopes
+```
+
+Everything editor-specific is confined to `src/extension.ts`, which does nothing
 but start a process.
 
-## Open decisions
+### Data sources
 
-- **Licence.** MIT.
-- **The language id is `apl`, not `dyalog-apl`.** The editor displays "Dyalog
-  APL", but the underlying id stays generic so that existing editor settings and
-  file associations keep working. The consequence is that installing this
-  alongside another extension that also claims `apl` — Optima Systems'
-  `vscode-apl-language`, for instance — means two grammars competing for the same
-  language and unpredictable highlighting. Install one or the other.
-- **The VS Code Marketplace.** Deliberately not published there yet. A stale
-  marketplace listing is worse than no listing — see "Credit and things to
-  reuse" for why this is not a hypothetical. Installable `.vsix` files are
-  attached to GitHub releases instead, which reach people who are looking
-  without misleading people who are not.
-- **Who maintains it.** Still the real question. A language server is not a
-  project with an end date; it needs someone across interpreter releases. The
-  state of the 2018 attempt is the evidence of what happens otherwise.
+Glyph characters are checked against RIDE's `src/bq.js`, which is generated from
+Dyalog's IME definitions. Official glyph names and the monadic and dyadic
+function names come from Dyalog's "Nomenclature: Functions and Operators" cheat
+sheet, which documents v16.0 — anything added since wants checking against a
+current source.
 
-## Contributing
+`src/keyboard.ts` is generated, not hand-written. RIDE stores four strings per
+keyboard locale in `src/kbds.js`, indexed by scancode — unshifted, shifted, APL,
+APL shifted — and derives its prefix map by pairing them.
+`tools/gen-keyboard.mjs` performs the same walk for all thirteen locales.
 
-Issues and pull requests welcome. The two most useful contributions, in order:
+Two tables remain hand-maintained and should eventually be generated: the alias
+lists used by name search, and the system name list, which is partial.
 
-1. `]Link` project awareness, which unlocks go-to-definition, find-references
-   and rename without needing an interpreter.
-2. Document outline: implement `textDocument/documentSymbol` so the breadcrumb
-   bar and Ctrl+Shift+O work. Needs tradfn header and dfn assignment parsing,
-   no interpreter required. A good first contribution.
+Hover deliberately contains no documentation links, since hand-written URLs rot.
+That wants a generated index of the documentation site.
+
+## Prior art
+
+`OptimaSystems/apl-language-server` and `vscode-apl-language-client` (2018), by
+Gil Athoraya, implement LSP for APL inside a Dyalog process. This project is a
+separate implementation rather than a fork, and shares no code with it.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
+
+[releases]: https://github.com/dragnim/dyalog-apl-language-server/releases
