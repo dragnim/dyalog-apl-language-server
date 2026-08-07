@@ -155,15 +155,7 @@ full set, so it should be generated rather than curated.
 ## Credit and things to reuse
 
 The prior art is Gil Athoraya's `OptimaSystems/apl-language-server` and its
-companion `vscode-apl-language-client`, both from 2018. Worth doing, in rough
-order of value:
-
-1. Ask Gil about deprecating the marketplace listings, or handing them over. A
-   2018 extension pinned to Dyalog v17 is currently the first thing a curious
-   developer finds, and the APL Wiki still points at it.
-2. Get a licence position on his glyph and help tables so they can be reused
-   rather than retyped.
-3. Ask him what was hard. He has already hit the walls this will hit.
+companion `vscode-apl-language-client`, both from 2018. 
 
 ## Layout
 
