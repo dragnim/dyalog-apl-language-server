@@ -3,6 +3,7 @@
 .gitignore
 src/**
 test/**
+tools/**
 tsconfig.json
 **/*.map
 **/*.ts
