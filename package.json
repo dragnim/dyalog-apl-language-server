@@ -1,13 +1,13 @@
 {
   "name": "dyalog-apl-language-server",
   "displayName": "Dyalog APL language server",
-  "description": "Syntax highlighting, glyph completion, hover documentation and diagnostics for Dyalog APL, in any editor that speaks LSP",
+  "description": "Static Dyalog APL language intelligence for any LSP editor. No interpreter required. Includes a TextMate grammar for VS Code syntax highlighting.",
   "version": "0.5.0",
   "publisher": "dragnim",
   "license": "MIT",
   "engines": {
     "vscode": "^1.80.0",
-    "node": ">=18"
+    "node": ">=22"
   },
   "categories": [
     "Programming Languages"
@@ -89,8 +89,10 @@
     "watch": "tsc -p . -w",
     "smoke": "node test/smoke.mjs",
     "grammar": "node test/highlight.mjs",
-    "test": "npm run smoke && npm run grammar",
-    "gen:keyboard": "node tools/gen-keyboard.mjs"
+    "controlwords": "node test/controlwords.mjs",
+    "test": "npm run smoke && npm run grammar && npm run controlwords",
+    "gen:keyboard": "node tools/gen-keyboard.mjs",
+    "gen:grammar": "npm run build && node tools/gen-grammar.mjs"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

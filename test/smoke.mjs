@@ -1,13 +1,43 @@
 /**
- * Drives the server over stdio exactly as a real editor would, so the thing can
- * be verified without opening VS Code. Run with: npm run smoke
+ * Drives the server over stdio exactly as a real editor would, and asserts on
+ * what comes back. Run with: npm run smoke
+ *
+ * This used to print the replies and exit 0 regardless, so a wrong answer looked
+ * exactly like a right one. Every check below now decides the exit code; the
+ * readable output is a side effect, not the point.
+ *
+ * Requires `npm run build` first, since it launches the compiled server.
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
+const { version: EXPECTED_VERSION } = createRequire(import.meta.url)(
+  path.join(root, 'package.json')
+);
+
+// ------------------------------------------------------------------ harness
+
+let passed = 0;
+const failures = [];
+
+function check(name, condition, detail) {
+  if (condition) {
+    passed++;
+    console.log(`  ok   ${name}`);
+  } else {
+    failures.push({ name, detail });
+    console.log(` FAIL  ${name}`);
+    if (detail !== undefined) console.log(`         ${detail}`);
+  }
+}
+
+const section = text => console.log(`\n\x1b[1m${text}\x1b[0m`);
+
+// ------------------------------------------------------------------- client
 
 const SOURCE = [
   '⍝ average of a vector',
@@ -17,7 +47,22 @@ const SOURCE = [
   'broken←{(+/⍵)÷≢⍵',
   'x←`r',
   'y←``rho',
-  'z←⎕N'
+  'z←⎕N',
+  'w←``shape',
+  'v←``rotate',
+  ':For i :I',
+  ':E'
+].join('\n');
+
+/** A document that must produce no diagnostics at all. */
+const CLEAN_SOURCE = [
+  '⍝ nothing wrong here',
+  "msg←'don''t'",
+  'avg←{(+/⍵)÷≢⍵}',
+  'nested←(1 2)(3 4)',
+  'arr←(',
+  '  1 2',
+  ')'
 ].join('\n');
 
 const server = spawn(process.execPath, [path.join(root, 'bin', 'dyalog-apl-language-server.js')], {
@@ -63,8 +108,19 @@ server.stdout.on('data', chunk => {
 });
 
 const uri = 'file:///tmp/sample.aplf';
-const at = (line, character) => ({ textDocument: { uri }, position: { line, character } });
-const label = text => `\n\x1b[1m${text}\x1b[0m`;
+const cleanUri = 'file:///tmp/clean.aplf';
+const at = (line, character, docUri = uri) => ({
+  textDocument: { uri: docUri },
+  position: { line, character }
+});
+const diagnosticsFor = u =>
+  notifications
+    .filter(n => n.method === 'textDocument/publishDiagnostics' && n.params.uri === u)
+    .flatMap(n => n.params.diagnostics);
+
+// --------------------------------------------------------------- initialise
+
+section('initialize');
 
 const init = await request('initialize', {
   processId: process.pid,
@@ -74,63 +130,204 @@ const init = await request('initialize', {
 });
 send({ method: 'initialized', params: {} });
 
-console.log(label('Server identified itself as'));
-console.log(` ${init.serverInfo.name} ${init.serverInfo.version}`);
-console.log(` capabilities: ${Object.keys(init.capabilities).join(', ')}`);
+check(
+  'server name is dyalog-apl-language-server',
+  init.serverInfo?.name === 'dyalog-apl-language-server',
+  `got ${JSON.stringify(init.serverInfo?.name)}`
+);
+check(
+  `advertised version matches package.json (${EXPECTED_VERSION})`,
+  init.serverInfo?.version === EXPECTED_VERSION,
+  `got ${JSON.stringify(init.serverInfo?.version)}`
+);
+check(
+  'completion capability is advertised',
+  Boolean(init.capabilities?.completionProvider),
+  `capabilities: ${Object.keys(init.capabilities ?? {}).join(', ')}`
+);
+check('hover capability is advertised', init.capabilities?.hoverProvider === true);
+check(
+  'prefix key is a completion trigger',
+  init.capabilities?.completionProvider?.triggerCharacters?.includes('`') === true,
+  `triggers: ${JSON.stringify(init.capabilities?.completionProvider?.triggerCharacters)}`
+);
+
+// -------------------------------------------------------------- diagnostics
 
 send({
   method: 'textDocument/didOpen',
   params: { textDocument: { uri, languageId: 'apl', version: 1, text: SOURCE } }
 });
+send({
+  method: 'textDocument/didOpen',
+  params: { textDocument: { uri: cleanUri, languageId: 'apl', version: 1, text: CLEAN_SOURCE } }
+});
 
-await new Promise(resolve => setTimeout(resolve, 300));
+await new Promise(resolve => setTimeout(resolve, 400));
 
-console.log(label('Diagnostics it reported'));
-const diagnostics = notifications
-  .filter(n => n.method === 'textDocument/publishDiagnostics')
-  .flatMap(n => n.params.diagnostics);
-if (diagnostics.length === 0) console.log(' (none)');
-for (const d of diagnostics) {
-  console.log(` line ${d.range.start.line + 1} col ${d.range.start.character + 1}: ${d.message}`);
-}
+section('diagnostics');
 
-console.log(label('Hover on ⍴ (line 3)'));
-const hoverGlyph = await request('textDocument/hover', at(2, 6));
-console.log(
-  hoverGlyph
-    ? hoverGlyph.contents.value.split('\n').map(l => ` ${l}`).join('\n')
-    : ' (nothing)'
+const diagnostics = diagnosticsFor(uri);
+const unclosed = diagnostics.find(d => /Unclosed \{/.test(d.message));
+check(
+  'the unclosed { on line 5 is reported',
+  Boolean(unclosed),
+  `got: ${diagnostics.map(d => d.message).join('; ') || '(none)'}`
+);
+check(
+  'it points at line 5',
+  unclosed?.range.start.line === 4,
+  `got line ${unclosed ? unclosed.range.start.line + 1 : '?'}`
+);
+check(
+  'it is reported as an error',
+  unclosed?.severity === 1,
+  `got severity ${unclosed?.severity}`
+);
+check('it is attributed to this server', unclosed?.source === 'dyalog-apl');
+
+const cleanDiagnostics = diagnosticsFor(cleanUri);
+check(
+  'a valid document produces no diagnostics',
+  cleanDiagnostics.length === 0,
+  `got: ${cleanDiagnostics.map(d => `line ${d.range.start.line + 1}: ${d.message}`).join('; ')}`
 );
 
-console.log(label('Hover on ⎕IO (line 4)'));
+// --------------------------------------------------------------------- hover
+
+section('hover');
+
+const hoverGlyph = await request('textDocument/hover', at(2, 6));
+const glyphText = hoverGlyph?.contents?.value ?? '';
+check('hover on ⍴ returns something', Boolean(hoverGlyph));
+check('it names Rho', /Rho/.test(glyphText), glyphText.split('\n')[0]);
+check('it gives the monadic meaning Shape', /Monadic:\s*Shape/.test(glyphText));
+check('it gives the dyadic meaning Reshape', /Dyadic:\s*Reshape/.test(glyphText));
+
 const hoverQuad = await request('textDocument/hover', at(3, 1));
-console.log(hoverQuad ? ` ${hoverQuad.contents.value}` : ' (nothing)');
+const quadText = hoverQuad?.contents?.value ?? '';
+check('hover on ⎕IO returns something', Boolean(hoverQuad));
+check('it identifies ⎕IO', /⎕IO/.test(quadText), quadText);
 
-console.log(label('Completion after `r (line 6)'));
+// ---------------------------------------------------------- key completion
+
+section('prefix key completion');
+
 const byKey = await request('textDocument/completion', at(5, 4));
-const matching = (items, prefix) => items.filter(i => i.filterText === prefix);
-for (const item of matching(byKey, '`r')) {
-  console.log(` ${item.label}  ${item.detail}   (replaces "${item.filterText}")`);
-}
-console.log(` ${byKey.length} glyphs offered in total, filtered by the editor as you type`);
+const rho = byKey.find(i => i.label === '⍴');
+check('`r offers ⍴', rho?.filterText === '`r', `⍴ filterText was ${JSON.stringify(rho?.filterText)}`);
+check('the edit inserts ⍴', rho?.textEdit?.newText === '⍴');
 
-console.log(label('Locale check: ≢ on a British keyboard (should be `@, not `")'));
+// The locale matters: ≢ is prefix-@ on a British keyboard, prefix-" on a US one.
 const notMatch = byKey.find(i => i.label === '≢');
-console.log(notMatch ? ` ≢ is typed with ${notMatch.filterText}` : ' (not offered)');
+check(
+  'en_GB maps ≢ to `@',
+  notMatch?.filterText === '`@',
+  `got ${JSON.stringify(notMatch?.filterText)}`
+);
+check(
+  'en_GB does not report the US mapping `"',
+  notMatch?.filterText !== '`"',
+  `got ${JSON.stringify(notMatch?.filterText)}`
+);
 
-console.log(label('Completion after ``rho (line 7)'));
-const byName = await request('textDocument/completion', at(6, 7));
-for (const item of byName.slice(0, 3)) {
-  console.log(` ${item.label}  ${item.detail}`);
+// --------------------------------------------------------- name completion
+
+section('name search completion');
+
+/** Ask for completion at the end of a line and find the item for a glyph. */
+async function nameSearch(line, character, glyph) {
+  const items = await request('textDocument/completion', at(line, character));
+  return items.find(i => i.label === glyph);
 }
 
-console.log(label('Completion after ⎕N (line 8)'));
+const byName = await nameSearch(6, 7, '⍴');
+check('``rho offers ⍴', Boolean(byName));
+check(
+  '``rho filter text matches what was typed',
+  byName?.filterText === '``rho',
+  `got ${JSON.stringify(byName?.filterText)}`
+);
+
+// The regression: these are secondary aliases. The server found the glyph but
+// used to hand back filterText built from the first alias, so the editor
+// filtered the item straight back out again.
+const byShape = await nameSearch(8, 9, '⍴');
+check('``shape offers ⍴', Boolean(byShape));
+check(
+  '``shape filter text matches what was typed',
+  byShape?.filterText === '``shape',
+  `got ${JSON.stringify(byShape?.filterText)}`
+);
+
+const byRotate = await nameSearch(9, 10, '⌽');
+check('``rotate offers ⌽', Boolean(byRotate));
+check(
+  '``rotate filter text matches what was typed',
+  byRotate?.filterText === '``rotate',
+  `got ${JSON.stringify(byRotate?.filterText)}`
+);
+
+// ------------------------------------------------------ system completion
+
+section('system name completion');
+
 const bySystemName = await request('textDocument/completion', at(7, 4));
-for (const item of bySystemName.filter(i => i.label.startsWith('⎕N')).slice(0, 5)) {
-  console.log(` ${item.label}  ${item.detail}`);
-}
+const systemLabels = bySystemName.map(i => i.label);
+check(
+  '⎕N offers ⎕NGET',
+  systemLabels.includes('⎕NGET'),
+  `offered: ${systemLabels.slice(0, 8).join(' ')}`
+);
+check('⎕N offers ⎕NC', systemLabels.includes('⎕NC'));
+check(
+  'every system completion carries a description',
+  bySystemName.every(i => typeof i.detail === 'string' && i.detail.length > 0)
+);
 
-console.log('');
+// ----------------------------------------------------- control completion
+
+section('colon word completion');
+
+const inFor = await request('textDocument/completion', at(10, 9));
+const forLabels = inFor.map(i => i.label);
+check(':For ... :I offers :In', forLabels.includes(':In'), `offered: ${forLabels.join(' ')}`);
+check(':For ... :I offers :InEach', forLabels.includes(':InEach'));
+check(
+  ':For ... :I does not offer :If',
+  !forLabels.includes(':If'),
+  `offered: ${forLabels.join(' ')}`
+);
+
+const atStatement = await request('textDocument/completion', at(11, 2));
+const statementLabels = atStatement.map(i => i.label);
+check(':E at statement start offers :EndIf', statementLabels.includes(':EndIf'));
+check(':E at statement start offers :End', statementLabels.includes(':End'));
+check(
+  ':E at statement start offers :EndDisposable',
+  statementLabels.includes(':EndDisposable'),
+  'the audited keyword set should include it'
+);
+check(
+  ':In is not offered at statement start',
+  !statementLabels.includes(':In'),
+  'it is only legal inside a :For'
+);
+check(
+  'every colon completion carries a description',
+  atStatement.every(i => typeof i.detail === 'string' && i.detail.length > 0)
+);
+
+// --------------------------------------------------------------- shutdown
+
 await request('shutdown', null);
 send({ method: 'exit' });
 server.kill();
+
+console.log('');
+if (failures.length) {
+  console.log(`${failures.length} of ${passed + failures.length} checks failed:`);
+  for (const f of failures) console.log(`  - ${f.name}${f.detail ? ` (${f.detail})` : ''}`);
+  process.exit(1);
+}
+console.log(`All ${passed} LSP checks passed.`);
