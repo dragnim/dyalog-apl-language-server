@@ -65,6 +65,15 @@ permits them.
 **Hover.** The glyph name, its monadic and dyadic meanings, and the keystroke
 that produces it. Works on `⎕`-names too.
 
+**Document outline.** Traditional functions and operators, named dfns, and
+explicit `:Namespace`, `:Class` and `:Interface` scripts appear in the editor's
+outline, breadcrumbs and symbol navigation, with definitions nested inside the
+script that contains them. Operators are distinguished from functions by their
+header, so `∇R←(LO Over)Y` is reported as an operator. Only constructs whose
+name can be read off the source with certainty are listed: an ordinary
+assignment like `x←1` is not a symbol, because nothing in the file says what
+`x` is.
+
 **Diagnostics.** Unbalanced brackets and unclosed character literals. Brackets
 inside comments and strings are ignored, the doubled-quote escape is handled, and
 brackets balance across the whole file so multi-line array notation does not
@@ -160,6 +169,7 @@ npm test                 # all three suites below
 npm run smoke            # LSP assertions, driving the server over stdio
 npm run grammar          # the grammar assigns the scopes it should
 npm run controlwords     # colon words and grammar have not drifted apart
+npm run symbols          # static symbol extraction, tested directly
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -181,22 +191,34 @@ runtime for its `initialize` reply, and a test asserts the two agree.
 ### Layout
 
 ```
-src/server.ts        the server: completion, hover, diagnostics
-src/glyphs.ts        glyph and system name data
-src/control-words.ts the authoritative colon word list, with contexts
-src/keyboard.ts      generated prefix keyboard tables, 13 locales
-src/extension.ts     the VS Code client, which only launches the server
-syntaxes/            the TextMate grammar; its keyword rule is generated
-bin/                 stdio entry point for other editors
+src/server.ts          the LSP surface: completion, hover, symbols, diagnostics
+src/analysis/scanner.ts  lexical masking of comments and character literals
+src/analysis/symbols.ts  static extraction of the named things in a file
+src/glyphs.ts          glyph and system name data
+src/control-words.ts   the authoritative colon word list, with contexts
+src/keyboard.ts        generated prefix keyboard tables, 13 locales
+src/extension.ts       the VS Code client, which only launches the server
+syntaxes/              the TextMate grammar; its keyword rule is generated
+bin/                   stdio entry point for other editors
 tools/gen-keyboard.mjs   generates src/keyboard.ts from pinned RIDE data
 tools/gen-grammar.mjs    generates the grammar's keyword rule
-test/smoke.mjs       LSP client with assertions
-test/highlight.mjs   checks the grammar assigns the expected scopes
+test/smoke.mjs         LSP client with assertions
+test/highlight.mjs     checks the grammar assigns the expected scopes
 test/controlwords.mjs  checks the two colon word consumers stay in step
+test/symbols.mjs       checks symbol extraction directly
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little
 but start a process.
+
+`src/analysis/` is the static analysis layer, and knows nothing about LSP: it
+takes source text and returns plain data with line and character positions, so
+`server.ts` only has to adapt it. That is deliberate, because workspace symbols
+(#13) and the project model (#1) will need the same extraction without the LSP
+types coming with it. `scanner.ts` is the single place that understands where
+comments and character literals begin and end; both symbol extraction and the
+bracket diagnostics read through it, so `x←'}'` cannot close a dfn and a bracket
+in a comment cannot be reported as unbalanced.
 
 ### Data sources
 

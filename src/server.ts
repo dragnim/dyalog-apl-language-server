@@ -8,6 +8,8 @@ import {
   CompletionParams,
   Diagnostic,
   DiagnosticSeverity,
+  DocumentSymbol,
+  DocumentSymbolParams,
   Hover,
   HoverParams,
   InitializeParams,
@@ -15,6 +17,7 @@ import {
   MarkupKind,
   Position,
   Range,
+  SymbolKind,
   TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 
@@ -32,6 +35,9 @@ import {
 } from './glyphs';
 
 import { controlWordsFor, type ControlWordContext } from './control-words';
+
+import { extractSymbols, type AplSymbol, type AplSymbolKind } from './analysis/symbols';
+import { scanLines } from './analysis/scanner';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -102,7 +108,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         resolveProvider: false,
         triggerCharacters: [settings.prefixKey, '⎕', ':']
       },
-      hoverProvider: true
+      hoverProvider: true,
+      documentSymbolProvider: true
     },
     serverInfo: { name: 'dyalog-apl-language-server', version: VERSION }
   };
@@ -313,6 +320,45 @@ function hoverAt(text: string, offset: number, doc: TextDocument): Hover | null 
   };
 }
 
+// ----------------------------------------------------------- document symbols
+
+/**
+ * LSP has no APL-shaped kinds, so these are the closest standard ones. A tradop
+ * maps to SymbolKind.Operator, which exists precisely for higher-order things
+ * and is what keeps operators visually distinct from functions in an outline.
+ */
+const SYMBOL_KINDS: Record<AplSymbolKind, SymbolKind> = {
+  tradfn: SymbolKind.Function,
+  tradop: SymbolKind.Operator,
+  dfn: SymbolKind.Function,
+  namespace: SymbolKind.Namespace,
+  class: SymbolKind.Class,
+  interface: SymbolKind.Interface
+};
+
+function toDocumentSymbol(symbol: AplSymbol): DocumentSymbol {
+  return {
+    name: symbol.name,
+    kind: SYMBOL_KINDS[symbol.kind],
+    detail: symbol.detail,
+    range: Range.create(
+      Position.create(symbol.range.start.line, symbol.range.start.character),
+      Position.create(symbol.range.end.line, symbol.range.end.character)
+    ),
+    selectionRange: Range.create(
+      Position.create(symbol.selectionRange.start.line, symbol.selectionRange.start.character),
+      Position.create(symbol.selectionRange.end.line, symbol.selectionRange.end.character)
+    ),
+    children: symbol.children.map(toDocumentSymbol)
+  };
+}
+
+connection.onDocumentSymbol((params: DocumentSymbolParams): DocumentSymbol[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  return extractSymbols(doc.getText()).map(toDocumentSymbol);
+});
+
 // --------------------------------------------------------------- diagnostics
 
 const OPENERS: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
@@ -330,30 +376,12 @@ const CLOSERS = new Set([')', ']', '}']);
 function analyse(doc: TextDocument): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const stack: { char: string; line: number; col: number }[] = [];
-  const lines = doc.getText().split(/\r\n|\r|\n/);
 
-  lines.forEach((line, lineNumber) => {
-    let inString = false;
-    let stringStart = 0;
-
-    for (let col = 0; col < line.length; col++) {
-      const char = line[col];
-
-      if (inString) {
-        if (char === "'") {
-          if (line[col + 1] === "'") col++;
-          else inString = false;
-        }
-        continue;
-      }
-
-      if (char === '⍝') break;
-
-      if (char === "'") {
-        inString = true;
-        stringStart = col;
-        continue;
-      }
+  // The scanner has already blanked out comments and character literals while
+  // preserving every column, so brackets inside them simply are not here.
+  scanLines(doc.getText()).forEach((line, lineNumber) => {
+    for (let col = 0; col < line.code.length; col++) {
+      const char = line.code[col];
 
       if (OPENERS[char]) {
         stack.push({ char, line: lineNumber, col });
@@ -379,9 +407,14 @@ function analyse(doc: TextDocument): Diagnostic[] {
       }
     }
 
-    if (inString) {
+    if (line.unterminatedStringAt !== -1) {
       diagnostics.push(
-        diagnostic(lineNumber, stringStart, line.length - stringStart, 'Unclosed character literal')
+        diagnostic(
+          lineNumber,
+          line.unterminatedStringAt,
+          line.text.length - line.unterminatedStringAt,
+          'Unclosed character literal'
+        )
       );
     }
   });

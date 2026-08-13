@@ -72,7 +72,7 @@
             "fr_FR",
             "it_IT"
           ],
-          "description": "Keyboard layout the prefix keys follow. Layouts differ: \u2262 is prefix-@ on a British keyboard and prefix-\" on a US one."
+          "description": "Keyboard layout the prefix keys follow. Layouts differ: ≢ is prefix-@ on a British keyboard and prefix-\" on a US one."
         }
       }
     },
@@ -90,9 +90,10 @@
     "smoke": "node test/smoke.mjs",
     "grammar": "node test/highlight.mjs",
     "controlwords": "node test/controlwords.mjs",
-    "test": "npm run smoke && npm run grammar && npm run controlwords",
+    "test": "npm run smoke && npm run grammar && npm run controlwords && npm run symbols",
     "gen:keyboard": "node tools/gen-keyboard.mjs",
-    "gen:grammar": "npm run build && node tools/gen-grammar.mjs"
+    "gen:grammar": "npm run build && node tools/gen-grammar.mjs",
+    "symbols": "node test/symbols.mjs"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

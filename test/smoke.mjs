@@ -54,15 +54,45 @@ const SOURCE = [
   ':E'
 ].join('\n');
 
-/** A document that must produce no diagnostics at all. */
+/**
+ * A document that must produce no diagnostics at all. The unbalanced brackets
+ * inside the literal and the comment are the point: they are what proves the
+ * shared scanner is masking them before the bracket check ever sees them.
+ */
 const CLEAN_SOURCE = [
-  '⍝ nothing wrong here',
+  '⍝ nothing wrong here ( [ {',
   "msg←'don''t'",
+  "unmatched←'( [ {'",
   'avg←{(+/⍵)÷≢⍵}',
   'nested←(1 2)(3 4)',
   'arr←(',
   '  1 2',
   ')'
+].join('\n');
+
+/** Exercised through a real textDocument/documentSymbol request. */
+const SYMBOL_SOURCE = [
+  '⍝ :Class NotAClass',
+  ':Namespace Stats',
+  '',
+  '    ∇R←Mean X;n',
+  '     n←≢X',
+  '     R←(+/X)÷n',
+  '    ∇',
+  '',
+  '    ∇R←(LO Over)Y',
+  '     R←LO Y',
+  '    ∇',
+  '',
+  '    Median←{',
+  "        ⍝ a } that must not close this",
+  '        s←⍵[⍋⍵]',
+  '        s[⌈2÷⍨≢s]',
+  '    }',
+  '',
+  '    threshold←0.5',
+  '',
+  ':EndNamespace'
 ].join('\n');
 
 const server = spawn(process.execPath, [path.join(root, 'bin', 'dyalog-apl-language-server.js')], {
@@ -109,6 +139,7 @@ server.stdout.on('data', chunk => {
 
 const uri = 'file:///tmp/sample.aplf';
 const cleanUri = 'file:///tmp/clean.aplf';
+const symbolUri = 'file:///tmp/symbols.apln';
 const at = (line, character, docUri = uri) => ({
   textDocument: { uri: docUri },
   position: { line, character }
@@ -147,6 +178,11 @@ check(
 );
 check('hover capability is advertised', init.capabilities?.hoverProvider === true);
 check(
+  'document symbol capability is advertised',
+  init.capabilities?.documentSymbolProvider === true,
+  `capabilities: ${Object.keys(init.capabilities ?? {}).join(', ')}`
+);
+check(
   'prefix key is a completion trigger',
   init.capabilities?.completionProvider?.triggerCharacters?.includes('`') === true,
   `triggers: ${JSON.stringify(init.capabilities?.completionProvider?.triggerCharacters)}`
@@ -161,6 +197,10 @@ send({
 send({
   method: 'textDocument/didOpen',
   params: { textDocument: { uri: cleanUri, languageId: 'apl', version: 1, text: CLEAN_SOURCE } }
+});
+send({
+  method: 'textDocument/didOpen',
+  params: { textDocument: { uri: symbolUri, languageId: 'apl', version: 1, text: SYMBOL_SOURCE } }
 });
 
 await new Promise(resolve => setTimeout(resolve, 400));
@@ -316,6 +356,94 @@ check(
 check(
   'every colon completion carries a description',
   atStatement.every(i => typeof i.detail === 'string' && i.detail.length > 0)
+);
+
+// ---------------------------------------------------------- document symbols
+
+section('document symbols');
+
+// LSP SymbolKind, from the specification.
+const KIND = { Class: 5, Method: 6, Function: 12, Operator: 25, Namespace: 3, Interface: 11 };
+
+const symbols = await request('textDocument/documentSymbol', {
+  textDocument: { uri: symbolUri }
+});
+
+check(
+  'one top-level symbol, the namespace',
+  Array.isArray(symbols) && symbols.length === 1 && symbols[0].name === 'Stats',
+  `got ${JSON.stringify((symbols ?? []).map(s => s.name))}`
+);
+check('it is reported as a namespace', symbols?.[0]?.kind === KIND.Namespace, `kind ${symbols?.[0]?.kind}`);
+check(
+  'the class named only in a comment is not a symbol',
+  !JSON.stringify(symbols).includes('NotAClass')
+);
+
+const children = symbols?.[0]?.children ?? [];
+check(
+  'its three definitions are children, in source order',
+  children.map(c => c.name).join(',') === 'Mean,Over,Median',
+  `got ${children.map(c => c.name).join(',')}`
+);
+check('Mean is a function', children[0]?.kind === KIND.Function, `kind ${children[0]?.kind}`);
+check(
+  'Over is an operator, not a function',
+  children[1]?.kind === KIND.Operator,
+  `kind ${children[1]?.kind} — the (LO Over)Y header makes it a tradop`
+);
+check('Median is a function', children[2]?.kind === KIND.Function);
+check(
+  'the plain variable threshold is not a symbol',
+  !JSON.stringify(symbols).includes('threshold')
+);
+
+// Ranges are what the editor navigates with, so they are checked against the
+// actual source rather than merely being present.
+const symbolLines = SYMBOL_SOURCE.split('\n');
+const textOf = r =>
+  r.start.line === r.end.line
+    ? symbolLines[r.start.line].slice(r.start.character, r.end.character)
+    : `${r.start.line}..${r.end.line}`;
+
+check(
+  'the namespace range spans :Namespace to :EndNamespace',
+  symbols?.[0]?.range.start.line === 1 && symbols?.[0]?.range.end.line === 20,
+  JSON.stringify(symbols?.[0]?.range)
+);
+check(
+  'selecting Mean selects the name alone',
+  textOf(children[0]?.selectionRange) === 'Mean',
+  JSON.stringify(textOf(children[0]?.selectionRange))
+);
+check(
+  'selecting Over selects the operator name alone',
+  textOf(children[1]?.selectionRange) === 'Over',
+  JSON.stringify(textOf(children[1]?.selectionRange))
+);
+check(
+  'Mean spans its header through its closing ∇',
+  children[0]?.range.start.line === 3 && children[0]?.range.end.line === 6,
+  JSON.stringify(children[0]?.range)
+);
+check(
+  'the dfn runs past the } inside its comment to the real closing brace',
+  children[2]?.range.start.line === 12 && children[2]?.range.end.line === 16,
+  JSON.stringify(children[2]?.range)
+);
+
+// The clean document holds one dfn among several ordinary assignments, and has
+// unbalanced brackets inside a literal and a comment. Exactly one symbol should
+// come back, which checks detection and masking at the same time.
+const cleanSymbols = await request('textDocument/documentSymbol', {
+  textDocument: { uri: cleanUri }
+});
+check(
+  'only the dfn is a symbol; msg, unmatched, nested and arr are not',
+  Array.isArray(cleanSymbols) &&
+    cleanSymbols.length === 1 &&
+    cleanSymbols[0].name === 'avg',
+  `got ${JSON.stringify((cleanSymbols ?? []).map(s => s.name))}`
 );
 
 // --------------------------------------------------------------- shutdown
