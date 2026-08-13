@@ -20,17 +20,29 @@ import {
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
+import { createRequire } from 'node:module';
+
 import {
   GLYPHS,
   SYSTEM_NAMES,
-  CONTROL_WORDS,
   glyphFor,
   systemNameFor,
   describe,
   shortDescribe
 } from './glyphs';
 
+import { controlWordsFor, type ControlWordContext } from './control-words';
+
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
+
+/**
+ * The one place the version is read. package.json is the single source; see
+ * the note in README's Development section. Resolved at runtime rather than
+ * inlined so that out/ and the packaged extension both find their own manifest.
+ */
+const { version: VERSION } = createRequire(__filename)('../package.json') as {
+  version: string;
+};
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -47,15 +59,41 @@ interface Settings {
 const DEFAULTS: Settings = { prefixKey: '`', diagnostics: true, keyboardLocale: 'en_US' };
 let settings: Settings = DEFAULTS;
 
-connection.onInitialize((params: InitializeParams): InitializeResult => {
-  const opts = params.initializationOptions as Partial<Settings> | undefined;
-  settings = { ...DEFAULTS, ...(opts ?? {}) };
-  if (!KEYBOARD_LOCALES.includes(settings.keyboardLocale as never)) {
+/**
+ * A prefix key has to be a single character that cannot appear in a name, or
+ * the completion triggers would fire while typing ordinary identifiers. An
+ * arbitrary string is rejected rather than half-honoured.
+ */
+export function validPrefixKey(key: unknown): key is string {
+  return typeof key === 'string' && [...key].length === 1 && !/[A-Za-z0-9\s]/u.test(key);
+}
+
+function applySettings(incoming: Partial<Settings>): void {
+  const merged = { ...settings, ...incoming };
+
+  if (!validPrefixKey(merged.prefixKey)) {
     connection.console.warn(
-      `Unknown keyboard locale "${settings.keyboardLocale}", falling back to en_US.`
+      `Invalid prefix key ${JSON.stringify(merged.prefixKey)}: it must be a single ` +
+        `character that is not a letter, digit or space. Falling back to ${JSON.stringify(
+          DEFAULTS.prefixKey
+        )}.`
     );
-    settings.keyboardLocale = 'en_US';
+    merged.prefixKey = DEFAULTS.prefixKey;
   }
+
+  if (!KEYBOARD_LOCALES.includes(merged.keyboardLocale as never)) {
+    connection.console.warn(
+      `Unknown keyboard locale "${merged.keyboardLocale}", falling back to en_US.`
+    );
+    merged.keyboardLocale = DEFAULTS.keyboardLocale;
+  }
+
+  settings = merged;
+}
+
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+  settings = DEFAULTS;
+  applySettings((params.initializationOptions as Partial<Settings> | undefined) ?? {});
 
   return {
     capabilities: {
@@ -66,13 +104,24 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       },
       hoverProvider: true
     },
-    serverInfo: { name: 'dyalog-apl-language-server', version: '0.5.0' }
+    serverInfo: { name: 'dyalog-apl-language-server', version: VERSION }
   };
 });
 
 connection.onDidChangeConfiguration(change => {
   const incoming = (change.settings as { dyalogApl?: Partial<Settings> } | undefined)?.dyalogApl;
-  if (incoming) settings = { ...settings, ...incoming };
+  if (incoming) {
+    const before = settings.prefixKey;
+    applySettings(incoming);
+    if (settings.prefixKey !== before) {
+      // triggerCharacters were fixed at initialize. The VS Code client restarts
+      // the server when this setting changes; anything else needs a reload.
+      connection.console.info(
+        'The prefix key changed. Restart the language server for the completion ' +
+          'trigger to follow it.'
+      );
+    }
+  }
   for (const doc of documents.all()) publishDiagnostics(doc);
 });
 
@@ -102,6 +151,16 @@ function glyphItem(
   };
 }
 
+function controlWordItems(context: ControlWordContext, range: Range): CompletionItem[] {
+  return controlWordsFor(context).map(word => ({
+    label: word.word,
+    kind: CompletionItemKind.Keyword,
+    detail: word.detail,
+    filterText: word.word,
+    textEdit: { range, newText: word.word }
+  }));
+}
+
 connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
@@ -123,16 +182,27 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
   if (byName) {
     const query = byName[1].toLowerCase().trim();
     const range = at(byName.index);
-    return GLYPHS.filter(glyph =>
-      query === '' || glyph.names.some(name => name.toLowerCase().includes(query))
-    ).map(glyph =>
-      glyphItem(
-        glyph,
-        range,
-        `${settings.prefixKey}${settings.prefixKey}${glyph.names[0]}`,
-        glyph.names[0]
-      )
-    );
+    const items: CompletionItem[] = [];
+    for (const glyph of GLYPHS) {
+      // The alias that matched is the one the filter text has to be built from.
+      // Using names[0] regardless meant the server found ⍴ for ``shape and then
+      // handed the editor "``rho" to filter on, so the item vanished as the user
+      // kept typing.
+      const matched =
+        query === ''
+          ? glyph.names[0]
+          : glyph.names.find(name => name.toLowerCase().includes(query));
+      if (matched === undefined) continue;
+      items.push(
+        glyphItem(
+          glyph,
+          range,
+          `${settings.prefixKey}${settings.prefixKey}${matched}`,
+          glyph.names[0]
+        )
+      );
+    }
+    return items;
   }
 
   // `k — the traditional prefix layout, e.g. `r for ⍴
@@ -160,17 +230,17 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
     }));
   }
 
-  // :Keyword — control structures, only at the start of a statement
+  // :In and :InEach are the only colon words that may appear mid-statement, and
+  // only inside a :For. Checked first: it is the more specific position.
+  const inForClause = /(^|⋄)\s*:For\b[^⋄]*:([A-Za-z]*)$/i.exec(line);
+  if (inForClause) {
+    return controlWordItems('for-clause', at(line.lastIndexOf(':')));
+  }
+
+  // Every other colon word may only start a line or follow a ⋄.
   const byControlWord = /(^|⋄)\s*:([A-Za-z]*)$/.exec(line);
   if (byControlWord) {
-    const start = line.lastIndexOf(':');
-    const range = at(start);
-    return CONTROL_WORDS.map(word => ({
-      label: word,
-      kind: CompletionItemKind.Keyword,
-      filterText: word,
-      textEdit: { range, newText: word }
-    }));
+    return controlWordItems('statement', at(line.lastIndexOf(':')));
   }
 
   return [];

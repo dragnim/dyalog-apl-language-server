@@ -72,7 +72,7 @@
     },
     "control-word": {
       "name": "keyword.control.apl",
-      "match": "(?i):(?:AndIf|OrIf|ElseIf|Else|EndIf|If|EndWhile|While|Until|EndRepeat|Repeat|EndFor|InEach|In|For|EndSelect|CaseList|Case|Select|EndTrap|Trap|EndWith|With|EndHold|Hold|EndNamespace|Namespace|EndClass|Class|EndInterface|Interface|EndProperty|Property|EndSection|Section|Field|Access|Implements|Include|Return|Leave|Continue|GoTo|Signature)(?![A-Za-z])"
+      "match": "(?i):(?:EndDisposable|EndInterface|EndNamespace|EndProperty|Disposable|EndSection|Implements|Attribute|EndRepeat|EndSelect|Interface|Namespace|Signature|CaseList|Continue|EndClass|EndWhile|Property|EndHold|EndTrap|EndWith|Include|Require|Section|Access|ElseIf|EndFor|InEach|Repeat|Return|Select|AndIf|Class|EndIf|Field|Leave|Until|Using|While|Case|Else|GoTo|Hold|OrIf|Trap|With|End|For|If|In)(?![A-Za-z])"
     },
     "label": {
       "name": "entity.name.label.apl",

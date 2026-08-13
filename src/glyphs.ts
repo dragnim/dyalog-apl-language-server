@@ -17,8 +17,11 @@
  *   algorithm, for all thirteen keyboard locales. Regenerate it with
  *   `npm run gen:keyboard` rather than editing anything by hand.
  * - The alias lists below are written from scratch. RIDE ships a much better
- *   set, but that repository carries no licence, so adopting it needs a
- *   two-line permission request rather than a copy-paste.
+ *   set in src/bq.js. Dyalog/ride is MIT licensed (Copyright (c) 2016-2023,
+ *   Dyalog Ltd), so that set can be adopted by preserving the notice — see
+ *   THIRD_PARTY_NOTICES.md and issue #4. No permission request is needed.
+ * - The colon words are NOT in this file. They live in src/control-words.ts,
+ *   which is also what the TextMate grammar's keyword rule is generated from.
  *
  * Deliberately excluded: ¤, ∥ and Á, which RIDE lists but which are not
  * Dyalog primitives, and the circled letters used for IME name entry.
@@ -170,21 +173,6 @@ export const SYSTEM_NAMES: { name: string; desc: string }[] = [
   { name: '⎕VSET', desc: 'Set the value of a variable' },
   { name: '⎕WA', desc: 'Workspace available' },
   { name: '⎕WSID', desc: 'Workspace identification' }
-];
-
-export const CONTROL_WORDS = [
-  ':If', ':AndIf', ':OrIf', ':ElseIf', ':Else', ':EndIf',
-  ':While', ':Until', ':EndWhile',
-  ':Repeat', ':EndRepeat',
-  ':For', ':In', ':InEach', ':EndFor',
-  ':Select', ':Case', ':CaseList', ':EndSelect',
-  ':Trap', ':EndTrap',
-  ':With', ':EndWith',
-  ':Hold', ':EndHold',
-  ':Return', ':Leave', ':Continue', ':GoTo',
-  ':Namespace', ':EndNamespace', ':Class', ':EndClass',
-  ':Field', ':Property', ':EndProperty', ':Access', ':Implements',
-  ':Section', ':EndSection'
 ];
 
 const BY_CHAR = new Map<string, Glyph>();

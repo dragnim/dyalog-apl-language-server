@@ -46,6 +46,26 @@ export function activate(context: ExtensionContext): void {
   );
 
   void client.start();
+
+  // The prefix key is part of the completion trigger characters, and those are
+  // fixed when the server announces its capabilities at initialize. Merely
+  // pushing the new configuration would leave the trigger pointing at the old
+  // key, so the server is restarted instead. The other settings are read live
+  // and need no restart.
+  context.subscriptions.push(
+    workspace.onDidChangeConfiguration(async event => {
+      if (!event.affectsConfiguration('dyalogApl.prefixKey')) return;
+      const current = workspace.getConfiguration('dyalogApl');
+      if (client) {
+        client.clientOptions.initializationOptions = {
+          prefixKey: current.get<string>('prefixKey', '`'),
+          diagnostics: current.get<boolean>('diagnostics', true),
+          keyboardLocale: current.get<string>('keyboardLocale', 'en_US')
+        };
+        await client.restart();
+      }
+    })
+  );
 }
 
 export function deactivate(): Thenable<void> | undefined {
