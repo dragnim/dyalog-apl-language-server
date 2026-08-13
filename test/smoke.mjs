@@ -9,8 +9,10 @@
  * Requires `npm run build` first, since it launches the compiled server.
  */
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
 import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -153,10 +155,19 @@ const diagnosticsFor = u =>
 
 section('initialize');
 
+// A real ]Link-shaped tree, so workspace indexing is exercised through the
+// actual initialize handshake rather than only in unit tests.
+const workspace = await fsp.mkdtemp(path.join(os.tmpdir(), 'apl-smoke-'));
+await fsp.mkdir(path.join(workspace, 'Stats'), { recursive: true });
+await fsp.writeFile(path.join(workspace, 'Stats', 'Mean.aplf'), '∇R←Mean X\n R←X\n∇\n', 'utf8');
+await fsp.writeFile(path.join(workspace, 'Stats', 'Sum.aplf'), '{+/⍵}\n', 'utf8');
+await fsp.writeFile(path.join(workspace, 'README.md'), '# not source\n', 'utf8');
+
 const init = await request('initialize', {
   processId: process.pid,
   rootUri: null,
-  capabilities: {},
+  workspaceFolders: [{ uri: pathToFileURL(workspace).href, name: 'fixture' }],
+  capabilities: { workspace: { workspaceFolders: true } },
   initializationOptions: { prefixKey: '`', diagnostics: true, keyboardLocale: 'en_GB' }
 });
 send({ method: 'initialized', params: {} });
@@ -446,11 +457,157 @@ check(
   `got ${JSON.stringify((cleanSymbols ?? []).map(s => s.name))}`
 );
 
+// ------------------------------------------------------------ project model
+
+section('workspace project model');
+
+// Indexing is deliberately started after initialize replies so a large tree
+// cannot delay startup, so give it a moment to land.
+await new Promise(resolve => setTimeout(resolve, 500));
+
+const logs = notifications
+  .filter(n => n.method === 'window/logMessage')
+  .map(n => n.params.message);
+const indexed = logs.find(m => m.startsWith('Indexed '));
+
+check(
+  'the workspace folder was indexed at startup',
+  indexed !== undefined,
+  `log messages: ${JSON.stringify(logs)}`
+);
+check(
+  'it found the two source files and ignored README.md',
+  /Indexed 2 object\(s\)/.test(indexed ?? ''),
+  indexed
+);
+check(
+  'across the root and the Stats namespace',
+  /in 2 namespace\(s\)/.test(indexed ?? ''),
+  indexed
+);
+check('with no problems', /0 problem\(s\)/.test(indexed ?? ''), indexed);
+check(
+  'workspace folder support is advertised',
+  init.capabilities?.workspace?.workspaceFolders?.supported === true,
+  JSON.stringify(init.capabilities?.workspace)
+);
+
+// The model is infrastructure for #10-#13; none of those is implemented, and
+// nothing should claim otherwise.
+for (const capability of [
+  'definitionProvider',
+  'referencesProvider',
+  'renameProvider',
+  'workspaceSymbolProvider'
+]) {
+  check(
+    `${capability} is not advertised`,
+    init.capabilities?.[capability] === undefined,
+    `got ${JSON.stringify(init.capabilities?.[capability])}`
+  );
+}
+
 // --------------------------------------------------------------- shutdown
 
 await request('shutdown', null);
 send({ method: 'exit' });
 server.kill();
+await fsp.rm(workspace, { recursive: true, force: true }).catch(() => {});
+
+// ------------------------------------------------- a client with no workspace
+
+section('a minimal client with no workspace');
+
+/**
+ * Neovim, Helix and a bare editor session may send no workspace folders and
+ * declare no folder-event support. Registering the folder-change handler
+ * unconditionally used to throw at load time and kill the server outright, so
+ * this starts a second one the hard way and checks it still works.
+ */
+const minimal = spawn(
+  process.execPath,
+  [path.join(root, 'bin', 'dyalog-apl-language-server.js')],
+  { stdio: ['pipe', 'pipe', 'pipe'] }
+);
+
+let minimalStderr = '';
+minimal.stderr.on('data', chunk => {
+  minimalStderr += chunk.toString('utf8');
+});
+
+let minimalBuffer = Buffer.alloc(0);
+const minimalPending = new Map();
+let minimalId = 1;
+
+minimal.stdout.on('data', chunk => {
+  minimalBuffer = Buffer.concat([minimalBuffer, chunk]);
+  for (;;) {
+    const headerEnd = minimalBuffer.indexOf('\r\n\r\n');
+    if (headerEnd === -1) return;
+    const header = minimalBuffer.subarray(0, headerEnd).toString('utf8');
+    const length = Number(/Content-Length: (\d+)/i.exec(header)[1]);
+    if (minimalBuffer.length < headerEnd + 4 + length) return;
+    const body = minimalBuffer.subarray(headerEnd + 4, headerEnd + 4 + length).toString('utf8');
+    minimalBuffer = minimalBuffer.subarray(headerEnd + 4 + length);
+    const message = JSON.parse(body);
+    if (message.id !== undefined && minimalPending.has(message.id)) {
+      minimalPending.get(message.id)(message.result);
+      minimalPending.delete(message.id);
+    }
+  }
+});
+
+function minimalSend(message) {
+  const body = JSON.stringify({ jsonrpc: '2.0', ...message });
+  minimal.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
+}
+function minimalRequest(method, params) {
+  const id = minimalId++;
+  return new Promise(resolve => {
+    minimalPending.set(id, resolve);
+    minimalSend({ id, method, params });
+  });
+}
+
+const minimalInit = await Promise.race([
+  minimalRequest('initialize', {
+    processId: process.pid,
+    rootUri: null,
+    capabilities: {},
+    initializationOptions: {}
+  }),
+  new Promise(resolve => setTimeout(() => resolve(undefined), 5000))
+]);
+minimalSend({ method: 'initialized', params: {} });
+
+check(
+  'it initializes rather than crashing',
+  minimalInit?.serverInfo?.name === 'dyalog-apl-language-server',
+  `stderr: ${minimalStderr.split('\n')[0] || '(none)'}`
+);
+check('it did not throw on startup', !/throw|Error:/.test(minimalStderr), minimalStderr.slice(0, 200));
+
+minimalSend({
+  method: 'textDocument/didOpen',
+  params: {
+    textDocument: { uri: 'file:///tmp/lone.aplf', languageId: 'apl', version: 1, text: 'Sq←{⍵*2}\n' }
+  }
+});
+
+const loneSymbols = await Promise.race([
+  minimalRequest('textDocument/documentSymbol', {
+    textDocument: { uri: 'file:///tmp/lone.aplf' }
+  }),
+  new Promise(resolve => setTimeout(() => resolve(undefined), 5000))
+]);
+check(
+  'single-file features still work with no project',
+  Array.isArray(loneSymbols) && loneSymbols.length === 1 && loneSymbols[0].name === 'Sq',
+  JSON.stringify(loneSymbols)
+);
+
+minimalSend({ method: 'exit' });
+minimal.kill();
 
 console.log('');
 if (failures.length) {

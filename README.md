@@ -79,6 +79,19 @@ inside comments and strings are ignored, the doubled-quote escape is handled, an
 brackets balance across the whole file so multi-line array notation does not
 produce false errors.
 
+**Project awareness.** The server understands the static structure of
+`]Link`-style source trees, mapping directories and supported APL files into a
+namespace and object model without a running interpreter: `Foo/Bar.aplf` is
+`#.Foo.Bar`. Directories are unscripted namespaces, file extensions give the
+object's name class, and a script that declares its own name takes that name.
+It follows `.linkconfig` settings such as `flatten`, decodes `caseCode`
+filenames, and refuses to guess where a source tree is contradictory.
+
+This is infrastructure rather than a feature you can see yet. It is what
+go-to-definition, find references, rename and workspace symbols will be built
+on; none of those is implemented, and the server advertises no capability for
+them.
+
 **Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
 Comments, character literals, numbers, system names, control structures, labels
 and dfn arguments, with primitives coloured by category so functions and
@@ -170,6 +183,7 @@ npm run smoke            # LSP assertions, driving the server over stdio
 npm run grammar          # the grammar assigns the scopes it should
 npm run controlwords     # colon words and grammar have not drifted apart
 npm run symbols          # static symbol extraction, tested directly
+npm run project          # ]Link project model, against temporary source trees
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -194,6 +208,7 @@ runtime for its `initialize` reply, and a test asserts the two agree.
 src/server.ts          the LSP surface: completion, hover, symbols, diagnostics
 src/analysis/scanner.ts  lexical masking of comments and character literals
 src/analysis/symbols.ts  static extraction of the named things in a file
+src/analysis/project.ts  the ]Link source tree as namespaces and objects
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -206,16 +221,17 @@ test/smoke.mjs         LSP client with assertions
 test/highlight.mjs     checks the grammar assigns the expected scopes
 test/controlwords.mjs  checks the two colon word consumers stay in step
 test/symbols.mjs       checks symbol extraction directly
+test/project.mjs       indexes temporary source trees and checks the mapping
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little
 but start a process.
 
 `src/analysis/` is the static analysis layer, and knows nothing about LSP: it
-takes source text and returns plain data with line and character positions, so
-`server.ts` only has to adapt it. That is deliberate, because workspace symbols
-(#13) and the project model (#1) will need the same extraction without the LSP
-types coming with it. `scanner.ts` is the single place that understands where
+takes source text or a directory and returns plain data with line and character
+positions, so `server.ts` only has to adapt it. That is deliberate, because
+workspace symbols (#13) and go-to-definition (#10) will need the same
+extraction without the LSP types coming with it. `scanner.ts` is the single place that understands where
 comments and character literals begin and end; both symbol extraction and the
 bracket diagnostics read through it, so `x←'}'` cannot close a dfn and a bracket
 in a comment cannot be reported as unbalanced.
@@ -253,6 +269,15 @@ MIT licensed, so its fuller alias set can be adopted by preserving the notice.
 
 Hover deliberately contains no documentation links, since hand-written URLs rot.
 That wants a generated index of the documentation site.
+
+The `]Link` mapping in `src/analysis/project.ts` was verified against
+[Dyalog/link](https://github.com/Dyalog/link) rather than assumed: the
+extension-to-name-class table comes from `StartupSession/Link/Utils.apln`, the
+array sub-extensions from `docs/Usage/Arrays.md`, case codes from
+`docs/API/Link.CaseCode.md`, and the rules for directories, duplicate
+definitions and filename mismatches from `docs/Discussion/TechDetails.md` and
+`docs/API/Link.Create.md`. The provenance is recorded in that file's header so
+it can be re-checked against a later Link release.
 
 ## Acknowledgements
 

@@ -24,6 +24,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import {
   GLYPHS,
@@ -38,6 +39,7 @@ import { controlWordsFor, type ControlWordContext } from './control-words';
 
 import { extractSymbols, type AplSymbol, type AplSymbolKind } from './analysis/symbols';
 import { scanLines } from './analysis/scanner';
+import { ProjectModel } from './analysis/project';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -97,9 +99,84 @@ function applySettings(incoming: Partial<Settings>): void {
   settings = merged;
 }
 
+// -------------------------------------------------------------- project model
+
+/**
+ * The static ]Link project model. Always present, and empty when there is no
+ * workspace: a client that opens a lone file with no folder must still get
+ * completion, hover, symbols and diagnostics, none of which consult this.
+ *
+ * Nothing user-facing is built on it yet — go to definition (#10), references
+ * (#11), rename (#12) and workspace symbols (#13) are the consumers, and no
+ * capability for those is advertised.
+ */
+let project = new ProjectModel();
+
+/** Whether the client said it can send workspace/didChangeWorkspaceFolders. */
+let clientSupportsFolderEvents = false;
+
+/** file:// URIs to filesystem paths, ignoring anything not on disk. */
+function toFsPath(uri: string): string | undefined {
+  if (!uri.startsWith('file:')) return undefined;
+  try {
+    return fileURLToPath(uri);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The folders the client gave us, newest LSP field first. `rootUri` and
+ * `rootPath` are both deprecated but still all some clients send, and a client
+ * may legitimately send none of the three.
+ */
+function workspaceDirectories(params: InitializeParams): string[] {
+  if (params.workspaceFolders?.length) {
+    return params.workspaceFolders
+      .map(folder => toFsPath(folder.uri))
+      .filter((p): p is string => p !== undefined);
+  }
+  if (params.rootUri) {
+    const single = toFsPath(params.rootUri);
+    if (single) return [single];
+  }
+  if (params.rootPath) return [params.rootPath];
+  return [];
+}
+
+async function indexWorkspace(directories: string[]): Promise<void> {
+  if (directories.length === 0) {
+    project = new ProjectModel();
+    connection.console.info('No workspace folder; project model is empty.');
+    return;
+  }
+  try {
+    project = await ProjectModel.index(directories);
+    const objects = project.objects().length;
+    const namespaces = project.namespaces().length;
+    const problems = project.problems().length;
+    connection.console.info(
+      `Indexed ${objects} object(s) in ${namespaces} namespace(s) across ` +
+        `${directories.length} root(s); ${problems} problem(s).`
+    );
+  } catch (error) {
+    // Indexing must never take the server down: everything else still works.
+    project = new ProjectModel();
+    connection.console.warn(
+      `Could not index the workspace: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   settings = DEFAULTS;
   applySettings((params.initializationOptions as Partial<Settings> | undefined) ?? {});
+
+  clientSupportsFolderEvents = params.capabilities.workspace?.workspaceFolders === true;
+
+  // Indexing happens after the reply, so a large tree cannot delay startup.
+  const directories = workspaceDirectories(params);
+  void indexWorkspace(directories);
 
   return {
     capabilities: {
@@ -109,7 +186,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         triggerCharacters: [settings.prefixKey, '⎕', ':']
       },
       hoverProvider: true,
-      documentSymbolProvider: true
+      documentSymbolProvider: true,
+      workspace: {
+        workspaceFolders: { supported: true, changeNotifications: true }
+      }
     },
     serverInfo: { name: 'dyalog-apl-language-server', version: VERSION }
   };
@@ -319,6 +399,46 @@ function hoverAt(text: string, offset: number, doc: TextDocument): Hover | null 
     }
   };
 }
+
+/**
+ * Source files changing on disk. A create, delete or change is applied to just
+ * that path; a rename reaches us as a delete plus a create, so it needs no case
+ * of its own. Only a change to the folder set triggers a full rescan.
+ */
+connection.onDidChangeWatchedFiles(async change => {
+  const paths = change.changes
+    .map(event => toFsPath(event.uri))
+    .filter((p): p is string => p !== undefined);
+  for (const file of paths) await project.fileChanged(file);
+});
+
+/**
+ * Registered only once the client has said it supports folder change events.
+ * Touching this getter beforehand, or at all against a client that does not
+ * support them, throws — which at module scope would take the whole server down
+ * for every simple client.
+ */
+connection.onInitialized(() => {
+  if (!clientSupportsFolderEvents) return;
+  connection.workspace.onDidChangeWorkspaceFolders(() => {
+    void connection.workspace.getWorkspaceFolders().then(folders => {
+      const directories = (folders ?? [])
+        .map(folder => toFsPath(folder.uri))
+        .filter((p): p is string => p !== undefined);
+      return indexWorkspace(directories);
+    });
+  });
+});
+
+/**
+ * A saved buffer can change what a file declares, and therefore which object it
+ * defines. Reindexing that one file is cheap; doing it on every keystroke would
+ * not be, so this deliberately waits for the save.
+ */
+documents.onDidSave(event => {
+  const file = toFsPath(event.document.uri);
+  if (file) void project.fileChanged(file);
+});
 
 // ----------------------------------------------------------- document symbols
 
