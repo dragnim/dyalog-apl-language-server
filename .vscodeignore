@@ -1,7 +1,11 @@
 .vscode/**
 .claude/**
+.github/**
 .gitignore
 docs/**
+# THIRD_PARTY_NOTICES.md is deliberately NOT excluded: the packaged extension
+# contains RIDE-derived data, and the MIT licence requires the notice to travel
+# with it.
 src/**
 test/**
 tools/**

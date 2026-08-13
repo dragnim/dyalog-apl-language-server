@@ -1,13 +1,25 @@
 # Dyalog APL language server
 
-Syntax highlighting, glyph completion, hover documentation and diagnostics for
-Dyalog APL, in any editor that speaks the Language Server Protocol.
+Static Dyalog APL language intelligence for any LSP editor. No interpreter
+required.
 
 > **Status: experimental preview.** Working, but early. See
 > [Limitations](#limitations) for what it does not attempt.
 
-Requires Node 18 or later. It does **not** require a Dyalog interpreter, so it
+Requires Node 22 or later. It does **not** require a Dyalog interpreter, so it
 works before you have installed one.
+
+**Glyph completion, hover documentation and diagnostics** are provided by the
+language server over LSP, and reach every editor equally. So will the navigation
+and refactoring features that come next.
+
+**Syntax highlighting is separate.** It comes from the TextMate grammar in
+`syntaxes/`, which the VS Code extension bundles — the server does not implement
+LSP semantic tokens, so highlighting is editor integration rather than something
+LSP delivers. Most editors already have APL syntax support of their own; the
+grammar can also be pointed at directly by anything that reads TextMate
+grammars. Making highlighting an LSP feature is tracked in
+[#15](https://github.com/dragnim/dyalog-apl-language-server/issues/15).
 
 Everything it knows is derived from your source tree, so it behaves identically
 on any machine and in any LSP-capable editor. Not requiring an interpreter is a
@@ -35,19 +47,20 @@ Recognised file extensions: `.apl`, `.aplf`, `.apla`, `.aplc`, `.apli`, `.apln`,
 
 ## Features
 
-**Syntax highlighting.** Comments, character literals, numbers, system names,
-control structures, labels and dfn arguments, with primitives coloured by
-category so functions and operators are visually distinct. It does not impose an
-editor font.
+Everything in this section is delivered over LSP, so every editor gets it,
+except syntax highlighting where noted.
 
 **Glyph completion.** Type `` ` `` for the glyph list, filtered as you type, so
-`` `r `` gives `⍴`. Type it twice for a name search, so ` ``rho ` also gives `⍴`.
-Completions carry the official glyph name and the monadic and dyadic meanings.
+`` `r `` gives `⍴`. Type it twice for a name search: ` ``rho `, ` ``shape ` and
+` ``reshape ` all give `⍴`. Completions carry the official glyph name and the
+monadic and dyadic meanings.
 
 **System name completion.** Typing `⎕` offers system names with descriptions.
 
 **Control structure completion.** Typing `:` at the start of a statement offers
-`:If`, `:EndFor` and the rest.
+the 48 colon words that may begin one, each with a description. `:In` and
+`:InEach` are offered only inside a `:For`, which is the only place Dyalog
+permits them.
 
 **Hover.** The glyph name, its monadic and dyadic meanings, and the keystroke
 that produces it. Works on `⎕`-names too.
@@ -57,6 +70,11 @@ inside comments and strings are ignored, the doubled-quote escape is handled, an
 brackets balance across the whole file so multi-line array notation does not
 produce false errors.
 
+**Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
+Comments, character literals, numbers, system names, control structures, labels
+and dfn arguments, with primitives coloured by category so functions and
+operators are visually distinct. It does not impose an editor font.
+
 ## Installing
 
 ### VS Code
@@ -64,7 +82,7 @@ produce false errors.
 Download the `.vsix` from the [latest release][releases], then either:
 
 ```
-code --install-extension dyalog-apl-language-server-0.5.0.vsix
+code --install-extension dyalog-apl-language-server-<version>.vsix
 ```
 
 or, in VS Code, open the Extensions panel, choose **Install from VSIX…** from
@@ -101,6 +119,12 @@ Helix, Zed, Emacs (eglot) and Sublime take the same command.
 Layouts differ by locale: `≢` is prefix-`@` on a British keyboard and prefix-`"`
 on a US one.
 
+`prefixKey` must be a single character that is not a letter, digit or space;
+anything else is rejected with a warning and the default is used. Because the key
+is registered as an editor completion trigger when the server starts, changing it
+restarts the server — the VS Code extension does that for you, and other clients
+need a reload. The other two settings take effect immediately.
+
 ## Limitations
 
 Without a running interpreter the server cannot know what a name *is*. In
@@ -126,41 +150,74 @@ same language; use one or the other.
 
 ## Development
 
+Requires Node 22 or later, the same as the server itself. No Dyalog
+installation is needed to build, test or run anything here.
+
 ```
-npm install
+npm ci
 npm run build            # compile TypeScript into out/
-npm test                 # smoke test and grammar checks
-npm run smoke            # drive the server over stdio and print its replies
-npm run grammar          # check every rule in the syntax grammar
-npm run gen:keyboard     # regenerate the keyboard tables
+npm test                 # all three suites below
+npm run smoke            # LSP assertions, driving the server over stdio
+npm run grammar          # the grammar assigns the scopes it should
+npm run controlwords     # colon words and grammar have not drifted apart
+npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
+npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
 
-`npm run smoke` acts as an editor, sending real LSP requests and printing the
-replies, which is the quickest way to see the server working without an editor
-involved. In VS Code, F5 launches a second window with the extension loaded.
+`npm test` needs `npm run build` first, since two of the suites read the
+compiled output. CI runs the whole sequence on Linux, Windows and macOS.
+
+`npm run smoke` acts as an editor, sending real LSP requests over stdio and
+asserting on the replies, so it is both the quickest way to see the server
+working and the thing that catches regressions.
 
 `npm run grammar` is worth running after any change to the grammar: if a single
 regex in it is invalid, VS Code silently loads no grammar at all and reports no
 error, which looks identical to highlighting not being implemented.
 
+The project version lives only in `package.json`. The server reads it at
+runtime for its `initialize` reply, and a test asserts the two agree.
+
 ### Layout
 
 ```
 src/server.ts        the server: completion, hover, diagnostics
-src/glyphs.ts        glyph, system name and control word data
+src/glyphs.ts        glyph and system name data
+src/control-words.ts the authoritative colon word list, with contexts
 src/keyboard.ts      generated prefix keyboard tables, 13 locales
 src/extension.ts     the VS Code client, which only launches the server
-syntaxes/            the TextMate grammar
+syntaxes/            the TextMate grammar; its keyword rule is generated
 bin/                 stdio entry point for other editors
-tools/gen-keyboard.mjs   generates src/keyboard.ts
-test/smoke.mjs       a minimal LSP client
+tools/gen-keyboard.mjs   generates src/keyboard.ts from pinned RIDE data
+tools/gen-grammar.mjs    generates the grammar's keyword rule
+test/smoke.mjs       LSP client with assertions
 test/highlight.mjs   checks the grammar assigns the expected scopes
+test/controlwords.mjs  checks the two colon word consumers stay in step
 ```
 
-Everything editor-specific is confined to `src/extension.ts`, which does nothing
+Everything editor-specific is confined to `src/extension.ts`, which does little
 but start a process.
 
 ### Data sources
+
+Generated data is preferred to hand-maintained tables wherever an authoritative
+upstream exists — see the principle in [docs/SCOPE.md](docs/SCOPE.md).
+Third party provenance and licence notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+`src/keyboard.ts` is generated, not hand-written. RIDE stores four strings per
+keyboard locale in `src/kbds.js`, indexed by scancode — unshifted, shifted, APL,
+APL shifted — and derives its prefix map by pairing them.
+`tools/gen-keyboard.mjs` performs the same walk for all thirteen locales. The
+upstream commit is **pinned**, so regenerating from a given project commit always
+produces the same file; moving to a newer RIDE revision means bumping the SHA in
+the generator and committing the regenerated output with it.
+
+`src/control-words.ts` is the single source for Dyalog's colon words, audited
+against Dyalog's own documentation and cross-checked against RIDE's
+`src/syntax_info.js`. The grammar's keyword rule is generated from it, and
+`npm run controlwords` fails if the two disagree — they had already drifted
+before this was in place.
 
 Glyph characters are checked against RIDE's `src/bq.js`, which is generated from
 Dyalog's IME definitions. Official glyph names and the monadic and dyadic
@@ -168,13 +225,9 @@ function names come from Dyalog's "Nomenclature: Functions and Operators" cheat
 sheet, which documents v16.0 — anything added since wants checking against a
 current source.
 
-`src/keyboard.ts` is generated, not hand-written. RIDE stores four strings per
-keyboard locale in `src/kbds.js`, indexed by scancode — unshifted, shifted, APL,
-APL shifted — and derives its prefix map by pairing them.
-`tools/gen-keyboard.mjs` performs the same walk for all thirteen locales.
-
 Two tables remain hand-maintained and should eventually be generated: the alias
-lists used by name search, and the system name list, which is partial.
+lists used by name search, and the system name list, which is partial. RIDE is
+MIT licensed, so its fuller alias set can be adopted by preserving the notice.
 
 Hover deliberately contains no documentation links, since hand-written URLs rot.
 That wants a generated index of the documentation site.

@@ -19,7 +19,19 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SOURCE = 'https://raw.githubusercontent.com/Dyalog/ride/master/src/kbds.js';
+/**
+ * Pinned deliberately. Fetching `master` meant that running this script on two
+ * different days could produce different output from the same project commit,
+ * which breaks the "source tree is the authority" principle in docs/SCOPE.md.
+ * Moving to a newer RIDE revision is an intentional change: bump the SHA and
+ * commit the regenerated src/keyboard.ts together.
+ *
+ * 66702dd is the most recent commit to touch src/kbds.js (2024-12-19).
+ */
+const RIDE_REPO = 'https://github.com/Dyalog/ride';
+const RIDE_COMMIT = '66702ddcfb692352d532e395ba3e7ca030f89200';
+const RIDE_PATH = 'src/kbds.js';
+const SOURCE = `https://raw.githubusercontent.com/Dyalog/ride/${RIDE_COMMIT}/${RIDE_PATH}`;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const response = await fetch(SOURCE);
@@ -75,7 +87,15 @@ const out = `// GENERATED FILE — do not edit by hand.
 //
 // Derived from RIDE's src/kbds.js by the algorithm in RIDE's src/km.js. See
 // tools/gen-keyboard.mjs for the details and the reasoning.
-// Generated from ${SOURCE}
+//
+// Upstream:  ${RIDE_REPO}
+// Commit:    ${RIDE_COMMIT}
+// Path:      ${RIDE_PATH}
+// Licence:   MIT, Copyright (c) 2016-2023 Dyalog Ltd. See THIRD_PARTY_NOTICES.md.
+//
+// The commit is pinned, so regenerating from the same project commit always
+// produces this file. Updating RIDE means bumping RIDE_COMMIT in the generator
+// and committing the regenerated output alongside it.
 
 /** Keyboard locales RIDE knows about. */
 export const KEYBOARD_LOCALES = [

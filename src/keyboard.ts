@@ -3,7 +3,15 @@
 //
 // Derived from RIDE's src/kbds.js by the algorithm in RIDE's src/km.js. See
 // tools/gen-keyboard.mjs for the details and the reasoning.
-// Generated from https://raw.githubusercontent.com/Dyalog/ride/master/src/kbds.js
+//
+// Upstream:  https://github.com/Dyalog/ride
+// Commit:    66702ddcfb692352d532e395ba3e7ca030f89200
+// Path:      src/kbds.js
+// Licence:   MIT, Copyright (c) 2016-2023 Dyalog Ltd. See THIRD_PARTY_NOTICES.md.
+//
+// The commit is pinned, so regenerating from the same project commit always
+// produces this file. Updating RIDE means bumping RIDE_COMMIT in the generator
+// and committing the regenerated output alongside it.
 
 /** Keyboard locales RIDE knows about. */
 export const KEYBOARD_LOCALES = [
