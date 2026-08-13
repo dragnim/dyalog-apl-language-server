@@ -9,6 +9,16 @@ Dyalog APL, in any editor that speaks the Language Server Protocol.
 Requires Node 18 or later. It does **not** require a Dyalog interpreter, so it
 works before you have installed one.
 
+Everything it knows is derived from your source tree, so it behaves identically
+on any machine and in any LSP-capable editor. Not requiring an interpreter is a
+permanent design rule rather than an early-stage limitation — see
+[docs/SCOPE.md](docs/SCOPE.md).
+
+For interactive Dyalog inside VS Code — REPL, tracing, debugging and runtime
+values — [`dyalog-labs/vscode-apl`](https://github.com/dyalog-labs/vscode-apl)
+is the tool for that. The two are complementary: it is the interpreter-integrated
+VS Code environment, this is static language intelligence for any editor.
+
 ## Which APL
 
 Dyalog APL specifically. The dialect-specific parts it knows about are the system
@@ -99,14 +109,15 @@ not be in the file. So there is no go-to-definition, no rename, and no
 "this is not a function" diagnostic. Everything it does report is something the
 interpreter would also reject.
 
-Two later stages raise that ceiling without discarding any of this:
+That ceiling is raised by understanding more of the project statically, not by
+consulting an interpreter. Following `]Link` conventions and treating a
+directory as a namespace gives go-to-definition, find-references, rename and
+unused-name warnings across a project — all inferred from the repository, still
+with no interpreter involved.
 
-1. **Project awareness.** Follow `]Link` conventions and treat a directory as a
-   namespace, giving go-to-definition, find-references, rename and unused-name
-   warnings across a project — still with no interpreter.
-2. **Optional interpreter attach.** When a Dyalog process is available, ask it
-   for real name classes and values, while the zero-install path keeps working
-   for everyone else.
+Attaching to a Dyalog process is not a planned stage and will not become one.
+Where something genuinely cannot be determined from the source, the server is
+meant to report nothing rather than guess. See [docs/SCOPE.md](docs/SCOPE.md).
 
 The language id is `apl` rather than `dyalog-apl`, so that existing editor
 settings and file associations keep working. Installing this alongside another

@@ -1,6 +1,7 @@
 .vscode/**
 .claude/**
 .gitignore
+docs/**
 src/**
 test/**
 tools/**
