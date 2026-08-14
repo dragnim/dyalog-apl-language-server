@@ -78,6 +78,8 @@ export interface SourceLocation {
   file: string;
   /** Where the defining construct sits, when the source states it. */
   range?: SourceRange;
+  /** Just the declared name within that construct, when the source states it. */
+  selectionRange?: SourceRange;
 }
 
 export interface ProjectObject {
@@ -221,7 +223,7 @@ export function identifyFile(fileName: string, settings = DEFAULT_SETTINGS): Fil
 export function declaredIdentity(
   source: string,
   kind: ObjectKind
-): { name: string; kind: ObjectKind; range: SourceRange } | undefined {
+): { name: string; kind: ObjectKind; range: SourceRange; selectionRange: SourceRange } | undefined {
   const top: AplSymbol[] = extractSymbols(source);
   if (top.length !== 1) return undefined; // Link forbids multiple names per file
 
@@ -243,12 +245,14 @@ export function declaredIdentity(
 
   // The extension states a class for all but generic code files; trust the
   // source when the two disagree only in specificity.
-  if (kind !== 'code' && declaredKind !== kind) {
-    // e.g. a :Class inside a .apln. The source is what 2 ⎕FIX would create.
-    return { name: symbol.name, kind: declaredKind, range: symbol.range };
-  }
-
-  return { name: symbol.name, kind: declaredKind, range: symbol.range };
+  // e.g. a :Class inside a .apln. The source is what 2 ⎕FIX would create, so
+  // the declaration wins over the extension either way.
+  return {
+    name: symbol.name,
+    kind: declaredKind,
+    range: symbol.range,
+    selectionRange: symbol.selectionRange
+  };
 }
 
 // ------------------------------------------------------------------ config
@@ -397,6 +401,7 @@ export class ProjectRoot {
     let declaredName: string | undefined;
     let mismatchedFilename: string | undefined;
     let range: SourceRange | undefined;
+    let selectionRange: SourceRange | undefined;
 
     // Only read the file when its contents could name the object.
     if (kind !== 'array') {
@@ -406,6 +411,7 @@ export class ProjectRoot {
         if (declared) {
           declaredName = declared.name;
           range = declared.range;
+          selectionRange = declared.selectionRange;
           kind = declared.kind;
           if (declared.name !== name) {
             mismatchedFilename = name;
@@ -429,7 +435,7 @@ export class ProjectRoot {
       name,
       qualifiedName: joinName(namespace.qualifiedName, name),
       kind,
-      location: { file: full, range },
+      location: { file: full, range, selectionRange },
       declaredName,
       mismatchedFilename
     };
@@ -481,6 +487,33 @@ export class ProjectRoot {
 
   files(): string[] {
     return [...this.byFile.keys()];
+  }
+
+  /**
+   * Walks a qualified name within this root alone. A name that is defined by
+   * more than one file resolves to nothing, matching Link's own rule that there
+   * must be exactly one file per named item.
+   */
+  resolve(qualifiedName: string): ProjectObject | ProjectNamespace | undefined {
+    const segments = qualifiedName.split('.');
+    if (segments.length === 0 || segments[0] !== '#') return undefined;
+
+    let namespace: ProjectNamespace = this.root;
+    for (let i = 1; i < segments.length; i++) {
+      const segment = segments[i];
+      const last = i === segments.length - 1;
+
+      if (last) {
+        const objects = namespace.objects.get(segment);
+        if (objects) return objects.length === 1 ? objects[0] : undefined;
+        return namespace.namespaces.get(segment);
+      }
+
+      const child = namespace.namespaces.get(segment);
+      if (!child) return undefined;
+      namespace = child;
+    }
+    return namespace;
   }
 
   /**
@@ -631,6 +664,41 @@ export class ProjectModel {
       objects.push(...[...namespace.objects.values()].filter(l => l.length === 1).map(l => l[0]));
     }
     return { objects, namespaces };
+  }
+
+  /**
+   * The root containing a file. Roots are separate projects: a reference in one
+   * never resolves into another, which is why resolution is scoped through here
+   * rather than searching the whole workspace.
+   */
+  private rootFor(file: string): ProjectRoot | undefined {
+    return this.roots.find(root => root.contains(file));
+  }
+
+  rootDirectoryFor(file: string): string | undefined {
+    return this.rootFor(file)?.directory;
+  }
+
+  /**
+   * The qualified name of the namespace a file sits in — the namespace its own
+   * code runs in, and therefore what an unqualified name in it resolves
+   * against. Returns undefined for a file outside every root.
+   */
+  namespaceNameForFile(file: string): string | undefined {
+    const root = this.rootFor(file);
+    if (!root) return undefined;
+    return root.namespaceForDirectory(path.dirname(file))?.qualifiedName;
+  }
+
+  /** Resolves a qualified name within one root only. */
+  resolveIn(rootDirectory: string, qualifiedName: string): ProjectObject | ProjectNamespace | undefined {
+    const root = this.roots.find(r => r.directory === rootDirectory);
+    return root?.resolve(qualifiedName);
+  }
+
+  /** Resolves a qualified name in whichever root the given file belongs to. */
+  resolveFrom(file: string, qualifiedName: string): ProjectObject | ProjectNamespace | undefined {
+    return this.rootFor(file)?.resolve(qualifiedName);
   }
 
   /** Applies a single file change, targeted rather than rescanning everything. */

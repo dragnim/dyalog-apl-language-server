@@ -90,11 +90,12 @@
     "smoke": "node test/smoke.mjs",
     "grammar": "node test/highlight.mjs",
     "controlwords": "node test/controlwords.mjs",
-    "test": "npm run smoke && npm run grammar && npm run controlwords && npm run symbols && npm run project",
+    "test": "npm run smoke && npm run grammar && npm run controlwords && npm run symbols && npm run project && npm run definition",
     "gen:keyboard": "node tools/gen-keyboard.mjs",
     "gen:grammar": "npm run build && node tools/gen-grammar.mjs",
     "symbols": "node test/symbols.mjs",
-    "project": "node test/project.mjs"
+    "project": "node test/project.mjs",
+    "definition": "node test/definition.mjs"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

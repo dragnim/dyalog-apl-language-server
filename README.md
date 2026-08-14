@@ -79,6 +79,14 @@ inside comments and strings are ignored, the doubled-quote escape is handled, an
 brackets balance across the whole file so multi-line array notation does not
 produce false errors.
 
+**Go to definition.** Navigate a statically resolvable name to its source: a
+definition in the same file, a sibling in the same `]Link` namespace, or a
+qualified path such as `#.Stats.Mean`. Navigation lands on the defined name
+rather than the top of the file. Ambiguous names deliberately return no result —
+a bare `Bar` does not jump merely because some `Bar` exists somewhere in the
+workspace, and a name defined by two files resolves to nothing rather than to
+whichever was indexed first.
+
 **Project awareness.** The server understands the static structure of
 `]Link`-style source trees, mapping directories and supported APL files into a
 namespace and object model without a running interpreter: `Foo/Bar.aplf` is
@@ -87,10 +95,9 @@ object's name class, and a script that declares its own name takes that name.
 It follows `.linkconfig` settings such as `flatten`, decodes `caseCode`
 filenames, and refuses to guess where a source tree is contradictory.
 
-This is infrastructure rather than a feature you can see yet. It is what
-go-to-definition, find references, rename and workspace symbols will be built
-on; none of those is implemented, and the server advertises no capability for
-them.
+Go to definition is built on this. Find references, rename and workspace
+symbols will be; none of those is implemented, and the server advertises no
+capability for them.
 
 **Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
 Comments, character literals, numbers, system names, control structures, labels
@@ -150,16 +157,23 @@ need a reload. The other two settings take effect immediately.
 ## Limitations
 
 Without a running interpreter the server cannot know what a name *is*. In
-`foo bar baz`, whether `foo` is a function or an array depends on things that may
-not be in the file. So there is no go-to-definition, no rename, and no
-"this is not a function" diagnostic. Everything it does report is something the
-interpreter would also reject.
+`foo bar baz`, whether `foo` is a function or an array depends on things that
+may not be in the file, so there is no rename yet and no "this is not a
+function" diagnostic. Everything it does report is something the interpreter
+would also reject.
 
-That ceiling is raised by understanding more of the project statically, not by
-consulting an interpreter. Following `]Link` conventions and treating a
-directory as a namespace gives go-to-definition, find-references, rename and
-unused-name warnings across a project — all inferred from the repository, still
-with no interpreter involved.
+Go to definition works within that limit rather than around it. It resolves a
+name only where the source tree settles the question: a definition in the same
+file, an object in the same `]Link` namespace, or an explicitly qualified path.
+Dyalog resolves an unqualified name in the current space and then through
+`⎕PATH`, which is workspace state no static reading can know — so a bare name
+that is not in the current space returns nothing rather than a guess. A name
+defined by two files returns nothing too, since Link itself treats that as an
+error.
+
+That ceiling rises as more of the project is understood statically, not by
+consulting an interpreter. Find references, rename and workspace symbols build
+on the same `]Link` model, still inferred from the repository alone.
 
 Attaching to a Dyalog process is not a planned stage and will not become one.
 Where something genuinely cannot be determined from the source, the server is
@@ -184,6 +198,7 @@ npm run grammar          # the grammar assigns the scopes it should
 npm run controlwords     # colon words and grammar have not drifted apart
 npm run symbols          # static symbol extraction, tested directly
 npm run project          # ]Link project model, against temporary source trees
+npm run definition       # name extraction and definition resolution
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -209,6 +224,8 @@ src/server.ts          the LSP surface: completion, hover, symbols, diagnostics
 src/analysis/scanner.ts  lexical masking of comments and character literals
 src/analysis/symbols.ts  static extraction of the named things in a file
 src/analysis/project.ts  the ]Link source tree as namespaces and objects
+src/analysis/names.ts    the APL name under a cursor
+src/analysis/definitions.ts  what that name refers to, if anything
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -222,6 +239,7 @@ test/highlight.mjs     checks the grammar assigns the expected scopes
 test/controlwords.mjs  checks the two colon word consumers stay in step
 test/symbols.mjs       checks symbol extraction directly
 test/project.mjs       indexes temporary source trees and checks the mapping
+test/definition.mjs    name extraction and definition resolution
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

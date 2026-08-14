@@ -167,7 +167,10 @@ const init = await request('initialize', {
   processId: process.pid,
   rootUri: null,
   workspaceFolders: [{ uri: pathToFileURL(workspace).href, name: 'fixture' }],
-  capabilities: { workspace: { workspaceFolders: true } },
+  capabilities: {
+    workspace: { workspaceFolders: true },
+    textDocument: { definition: { linkSupport: true } }
+  },
   initializationOptions: { prefixKey: '`', diagnostics: true, keyboardLocale: 'en_GB' }
 });
 send({ method: 'initialized', params: {} });
@@ -492,14 +495,9 @@ check(
   JSON.stringify(init.capabilities?.workspace)
 );
 
-// The model is infrastructure for #10-#13; none of those is implemented, and
-// nothing should claim otherwise.
-for (const capability of [
-  'definitionProvider',
-  'referencesProvider',
-  'renameProvider',
-  'workspaceSymbolProvider'
-]) {
+// Go to definition (#10) consumes the model. References (#11), rename (#12)
+// and workspace symbols (#13) do not exist yet and must not be claimed.
+for (const capability of ['referencesProvider', 'renameProvider', 'workspaceSymbolProvider']) {
   check(
     `${capability} is not advertised`,
     init.capabilities?.[capability] === undefined,
@@ -507,6 +505,119 @@ for (const capability of [
   );
 }
 
+// ---------------------------------------------------------- go to definition
+
+section('go to definition');
+
+check(
+  'definitionProvider is advertised',
+  init.capabilities?.definitionProvider === true,
+  JSON.stringify(init.capabilities?.definitionProvider)
+);
+
+// A caller inside the same Link namespace as Mean and Sum.
+const callerPath = path.join(workspace, 'Stats', 'Caller.aplf');
+const callerUri = pathToFileURL(callerPath).href;
+const meanUri = pathToFileURL(path.join(workspace, 'Stats', 'Mean.aplf')).href;
+const sumUri = pathToFileURL(path.join(workspace, 'Stats', 'Sum.aplf')).href;
+
+const CALLER = [
+  '∇R←Caller X',
+  ' R←#.Stats.Mean X',
+  ' R←Mean R',
+  ' R←Sum R',
+  ' ⍝ Mean in a comment',
+  " t←'#.Stats.Mean'",
+  ' R←Missing R',
+  ' ⎕IO←0',
+  '∇'
+].join('\n');
+
+send({
+  method: 'textDocument/didOpen',
+  params: { textDocument: { uri: callerUri, languageId: 'apl', version: 1, text: CALLER } }
+});
+
+const definitionAt = (line, character) =>
+  request('textDocument/definition', {
+    textDocument: { uri: callerUri },
+    position: { line, character }
+  });
+
+// This client asked for linkSupport, so it should get LocationLink[].
+const rootQualified = await definitionAt(1, 14);
+check(
+  'a root-qualified name returns a LocationLink',
+  Array.isArray(rootQualified) && rootQualified[0]?.targetUri !== undefined,
+  JSON.stringify(rootQualified)
+);
+check(
+  '#.Stats.Mean navigates to Mean.aplf',
+  rootQualified?.[0]?.targetUri === meanUri,
+  `${rootQualified?.[0]?.targetUri} vs ${meanUri}`
+);
+check(
+  'and selects the name rather than the whole file',
+  rootQualified?.[0]?.targetSelectionRange?.start?.character === 3 &&
+    rootQualified?.[0]?.targetSelectionRange?.end?.character === 7,
+  JSON.stringify(rootQualified?.[0]?.targetSelectionRange)
+);
+
+const bare = await definitionAt(2, 5);
+check(
+  'a bare sibling name navigates',
+  bare?.[0]?.targetUri === meanUri,
+  JSON.stringify(bare)
+);
+
+const bareDfn = await definitionAt(3, 5);
+check(
+  'a bare dfn file navigates to a sensible destination',
+  bareDfn?.[0]?.targetUri === sumUri && bareDfn?.[0]?.targetSelectionRange?.start?.line === 0,
+  JSON.stringify(bareDfn)
+);
+
+check(
+  'a name in a comment returns nothing',
+  (await definitionAt(4, 5)) === null,
+  JSON.stringify(await definitionAt(4, 5))
+);
+check(
+  'a name in a character literal returns nothing',
+  (await definitionAt(5, 14)) === null,
+  JSON.stringify(await definitionAt(5, 14))
+);
+check('an unknown name returns nothing', (await definitionAt(6, 6)) === null);
+check('a system name returns nothing', (await definitionAt(7, 2)) === null);
+check('a primitive returns nothing', (await definitionAt(1, 2)) === null);
+
+// The live buffer differs from disk: navigation must follow the buffer.
+send({
+  method: 'textDocument/didOpen',
+  params: {
+    textDocument: {
+      uri: meanUri,
+      languageId: 'apl',
+      version: 1,
+      text: '⍝ inserted while unsaved\n∇R←Mean X\n R←X\n∇\n'
+    }
+  }
+});
+const afterEdit = await definitionAt(1, 14);
+check(
+  'navigation follows an unsaved edit in the target file',
+  afterEdit?.[0]?.targetSelectionRange?.start?.line === 1,
+  `${JSON.stringify(afterEdit?.[0]?.targetSelectionRange)} — on disk the header is line 0`
+);
+
+// #11, #12 and #13 are not implemented and must not be claimed.
+for (const capability of ['referencesProvider', 'renameProvider', 'workspaceSymbolProvider']) {
+  check(
+    `${capability} is still not advertised`,
+    init.capabilities?.[capability] === undefined,
+    `got ${JSON.stringify(init.capabilities?.[capability])}`
+  );
+}
 // --------------------------------------------------------------- shutdown
 
 await request('shutdown', null);
@@ -604,6 +715,25 @@ check(
   'single-file features still work with no project',
   Array.isArray(loneSymbols) && loneSymbols.length === 1 && loneSymbols[0].name === 'Sq',
   JSON.stringify(loneSymbols)
+);
+
+// This client did not ask for linkSupport, so it must get a plain Location.
+const loneDefinition = await Promise.race([
+  minimalRequest('textDocument/definition', {
+    textDocument: { uri: 'file:///tmp/lone.aplf' },
+    position: { line: 0, character: 0 }
+  }),
+  new Promise(resolve => setTimeout(() => resolve(undefined), 5000))
+]);
+check(
+  'a same-file definition resolves with no workspace at all',
+  loneDefinition?.uri === 'file:///tmp/lone.aplf' && loneDefinition?.range !== undefined,
+  JSON.stringify(loneDefinition)
+);
+check(
+  'and a client without linkSupport gets a plain Location',
+  loneDefinition !== undefined && !Array.isArray(loneDefinition),
+  JSON.stringify(loneDefinition)
 );
 
 minimalSend({ method: 'exit' });

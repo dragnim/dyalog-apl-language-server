@@ -6,10 +6,13 @@ import {
   CompletionItem,
   CompletionItemKind,
   CompletionParams,
+  DefinitionParams,
   Diagnostic,
   DiagnosticSeverity,
   DocumentSymbol,
   DocumentSymbolParams,
+  Location,
+  LocationLink,
   Hover,
   HoverParams,
   InitializeParams,
@@ -24,7 +27,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   GLYPHS,
@@ -40,6 +43,7 @@ import { controlWordsFor, type ControlWordContext } from './control-words';
 import { extractSymbols, type AplSymbol, type AplSymbolKind } from './analysis/symbols';
 import { scanLines } from './analysis/scanner';
 import { ProjectModel } from './analysis/project';
+import { resolveDefinition } from './analysis/definitions';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -115,6 +119,9 @@ let project = new ProjectModel();
 /** Whether the client said it can send workspace/didChangeWorkspaceFolders. */
 let clientSupportsFolderEvents = false;
 
+/** Whether the client accepts LocationLink rather than plain Location. */
+let clientSupportsDefinitionLinks = false;
+
 /** file:// URIs to filesystem paths, ignoring anything not on disk. */
 function toFsPath(uri: string): string | undefined {
   if (!uri.startsWith('file:')) return undefined;
@@ -173,6 +180,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   applySettings((params.initializationOptions as Partial<Settings> | undefined) ?? {});
 
   clientSupportsFolderEvents = params.capabilities.workspace?.workspaceFolders === true;
+  clientSupportsDefinitionLinks =
+    params.capabilities.textDocument?.definition?.linkSupport === true;
 
   // Indexing happens after the reply, so a large tree cannot delay startup.
   const directories = workspaceDirectories(params);
@@ -187,6 +196,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       },
       hoverProvider: true,
       documentSymbolProvider: true,
+      definitionProvider: true,
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -477,6 +487,52 @@ connection.onDocumentSymbol((params: DocumentSymbolParams): DocumentSymbol[] => 
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
   return extractSymbols(doc.getText()).map(toDocumentSymbol);
+});
+
+// -------------------------------------------------------------- definitions
+
+const toRange = (range: { start: Position; end: Position }): Range =>
+  Range.create(
+    Position.create(range.start.line, range.start.character),
+    Position.create(range.end.line, range.end.character)
+  );
+
+/**
+ * Go to definition. All the judgement lives in analysis/definitions.ts; this
+ * only turns paths into URIs and picks the reply shape the client asked for.
+ */
+connection.onDefinition((params: DefinitionParams): Location | LocationLink[] | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const target = resolveDefinition({
+    text: doc.getText(),
+    file: toFsPath(params.textDocument.uri),
+    position: params.position,
+    project,
+    // Another open buffer may have moved since it was last saved.
+    liveText: file => {
+      for (const open of documents.all()) {
+        const openPath = toFsPath(open.uri);
+        if (openPath && openPath === file) return open.getText();
+      }
+      return undefined;
+    }
+  });
+  if (!target) return null;
+
+  const uri = target.file === undefined ? params.textDocument.uri : pathToFileURL(target.file).href;
+
+  if (clientSupportsDefinitionLinks) {
+    return [
+      {
+        targetUri: uri,
+        targetRange: toRange(target.range),
+        targetSelectionRange: toRange(target.selectionRange)
+      }
+    ];
+  }
+  return { uri, range: toRange(target.selectionRange) };
 });
 
 // --------------------------------------------------------------- diagnostics
