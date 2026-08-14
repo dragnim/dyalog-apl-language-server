@@ -28,13 +28,13 @@
  * resolveDefinition in definitions.ts.
  */
 
-import { scanLine } from './scanner';
+import { scanLine, NAME_CHARS, NAME_FIRST_CHARS } from './scanner';
 import type { SourceRange } from './symbols';
 
-/** First character of a name: no digits. */
-const NAME_START = /[A-Za-z_∆⍙]/;
-/** Subsequent characters. */
-const NAME_PART = /[A-Za-z0-9_∆⍙]/;
+// The legal-name character set lives in scanner.ts, taken from Dyalog's
+// "Legal Names" table. See the note there about the discontinuous ranges.
+const NAME_START = new RegExp(`[${NAME_FIRST_CHARS}]`, 'u');
+const NAME_PART = new RegExp(`[${NAME_CHARS}]`, 'u');
 
 export interface NameReference {
   /** The single segment the cursor is on, e.g. `Bar` in `#.Foo.Bar`. */
@@ -169,7 +169,8 @@ export function isLocallyBound(name: string, lines: string[]): boolean {
     // A ∇ header: arguments, result and ;-locals are all bound names.
     const trimmed = code.trim();
     if (!trimmed.startsWith('∇')) continue;
-    const names: string[] = trimmed.slice(1).match(/[A-Za-z_∆⍙][A-Za-z0-9_∆⍙]*/g) ?? [];
+    const names: string[] =
+      trimmed.slice(1).match(new RegExp(`[${NAME_FIRST_CHARS}][${NAME_CHARS}]*`, 'gu')) ?? [];
     if (names.includes(name)) return true;
   }
   return false;

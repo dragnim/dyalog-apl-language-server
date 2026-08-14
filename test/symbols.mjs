@@ -15,10 +15,10 @@ import { createRequire } from 'node:module';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 
-let extractSymbols, parseHeader, scanLine;
+let extractSymbols, parseHeader, scanLine, isLegalName;
 try {
   ({ extractSymbols, parseHeader } = require(path.join(root, 'out', 'analysis', 'symbols.js')));
-  ({ scanLine } = require(path.join(root, 'out', 'analysis', 'scanner.js')));
+  ({ scanLine, isLegalName } = require(path.join(root, 'out', 'analysis', 'scanner.js')));
 } catch (error) {
   console.error('out/analysis is missing. Run `npm run build` first.');
   console.error(error.message);
@@ -67,6 +67,40 @@ check(
   String(scanLine("x←'oops").unterminatedStringAt)
 );
 check('a terminated literal reports nothing', scanLine("x←'ok'").unterminatedStringAt === -1);
+
+// ---------------------------------------------------------- legal names
+
+section('legal names (Dyalog "Legal Names" table)');
+
+// Every example Dyalog's own documentation gives, legal and illegal.
+for (const [name, legal] of [
+  ['THIS∆IS∆A∆NAME', true],
+  ['X1233', true],
+  ['SALES', true],
+  ['pjb_1', true],
+  ['BAD NAME', false],
+  ['3+21', false],
+  ['S!H|PRICE', false],
+  ['1_pjb', false]
+]) {
+  check(
+    `${JSON.stringify(name)} is ${legal ? 'legal' : 'illegal'}`,
+    isLegalName(name) === legal,
+    `got ${isLegalName(name)}`
+  );
+}
+
+// The accented and circled letters the table lists, which a naive A-Za-z
+// pattern would wrongly reject.
+for (const name of ['Café', 'naïve', 'ß', 'þor', 'Ⓐbc', 'ÀÖØÝ']) {
+  check(`${JSON.stringify(name)} is legal`, isLegalName(name) === true);
+}
+
+// The ranges are discontinuous for a reason: × and ÷ sit inside them and are
+// primitives, not letters. ý is absent from Dyalog's list too.
+for (const name of ['x×y', 'a÷b', 'ýes', '', ' ', 'Foo.Bar', '⎕IO', '+']) {
+  check(`${JSON.stringify(name)} is not a legal name`, isLegalName(name) === false);
+}
 
 // -------------------------------------------------------------- headers
 

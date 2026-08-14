@@ -42,7 +42,7 @@ import {
 import { controlWordsFor, type ControlWordContext } from './control-words';
 
 import { extractSymbols, type AplSymbol, type AplSymbolKind } from './analysis/symbols';
-import { scanLines } from './analysis/scanner';
+import { scanLines, NAME_CHARS } from './analysis/scanner';
 import { ProjectModel } from './analysis/project';
 import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
@@ -348,7 +348,7 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
 
 // --------------------------------------------------------------------- hover
 
-const NAME_CHAR = /[A-Za-z0-9_∆⍙]/;
+const NAME_CHAR = new RegExp(`[${NAME_CHARS}]`, 'u');
 
 connection.onHover((params: HoverParams): Hover | null => {
   const doc = documents.get(params.textDocument.uri);

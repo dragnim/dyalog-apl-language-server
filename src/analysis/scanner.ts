@@ -72,5 +72,41 @@ export function scanLines(source: string): ScannedLine[] {
   return splitLines(source).map(scanLine);
 }
 
-/** Name characters as Dyalog defines them, including ∆ and ⍙. */
-export const NAME_PATTERN = '[A-Za-z_∆⍙][A-Za-z0-9_∆⍙]*';
+/**
+ * The characters Dyalog allows in a name, as one authoritative set.
+ *
+ * From "Legal Names" in Dyalog's programming reference guide
+ * (Dyalog/documentation, programming-reference-guide/docs/introduction/names.md):
+ * a name is any sequence of these characters starting with a non-numeric one.
+ *
+ *   A-Z_  a-z  0-9  ∆⍙
+ *   ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝß
+ *   àáâãäåæçèéêëìíîïðñòóôõöøùúûüþ
+ *   Ⓐ-Ⓩ  (the circled alphabet)
+ *
+ * The accented ranges are deliberately discontinuous. U+00D7 (×) sits between
+ * Ö and Ø, and U+00F7 (÷) between ö and ø; both are primitives, not letters, so
+ * a naive À-ÿ range would wrongly swallow them. ý (U+00FD) is likewise absent
+ * from Dyalog's table, which lists ùúûüþ. RIDE's own character class in
+ * src/syntax_info.js — 'A-Z_a-zÀ-ÖØ-Ýß-öø-üþ∆⍙Ⓐ-Ⓩ' — agrees exactly, which is
+ * a useful second source.
+ *
+ * Everything that needs to recognise a name reads these, so the set is defined
+ * once rather than spelled out in six regexes that can drift apart.
+ */
+const NAME_ACCENTED = 'À-ÖØ-Ýß-öø-üþ';
+const NAME_CIRCLED = 'Ⓐ-Ⓩ';
+
+/** Characters legal anywhere in a name except the first position. */
+export const NAME_CHARS = `A-Za-z0-9_∆⍙${NAME_ACCENTED}${NAME_CIRCLED}`;
+
+/** Characters legal as the first character: the above without digits. */
+export const NAME_FIRST_CHARS = `A-Za-z_∆⍙${NAME_ACCENTED}${NAME_CIRCLED}`;
+
+/** A complete name. */
+export const NAME_PATTERN = `[${NAME_FIRST_CHARS}][${NAME_CHARS}]*`;
+
+/** Whether a string is a legal Dyalog name in its entirety. */
+export function isLegalName(name: string): boolean {
+  return new RegExp(`^${NAME_PATTERN}$`, 'u').test(name);
+}

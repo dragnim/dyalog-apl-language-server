@@ -29,7 +29,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { scanLines } from './scanner';
+import { scanLines, NAME_CHARS } from './scanner';
 import type { SourceRange } from './symbols';
 import { nameAt } from './names';
 import { resolveDefinition, type DefinitionTarget } from './definitions';
@@ -103,7 +103,7 @@ function sameIdentity(a: TargetIdentity, b: TargetIdentity): boolean {
 /** Whole-name occurrences of `name` in already-masked code. */
 function occurrencesIn(code: string, name: string): number[] {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`(?<![A-Za-z0-9_∆⍙])${escaped}(?![A-Za-z0-9_∆⍙])`, 'g');
+  const pattern = new RegExp(`(?<![${NAME_CHARS}])${escaped}(?![${NAME_CHARS}])`, 'gu');
   const columns: number[] = [];
   for (let match = pattern.exec(code); match !== null; match = pattern.exec(code)) {
     columns.push(match.index);

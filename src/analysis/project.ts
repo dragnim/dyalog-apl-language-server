@@ -46,6 +46,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { extractSymbols, type AplSymbol, type SourceRange } from './symbols';
+import { isLegalName } from './scanner';
 
 // ------------------------------------------------------------------- model
 
@@ -134,7 +135,7 @@ const GENERIC_CODE_EXTENSIONS = ['dyalog', 'apl', 'mipage'];
 /** Plain-text array formats, which sit before `.apla`. */
 const ARRAY_SUB_EXTENSIONS = ['CR', 'LF', 'CRLF', 'vec', 'mat'];
 
-const NAME_CHAR = /^[A-Za-z_∆⍙][A-Za-z0-9_∆⍙]*$/;
+// Dyalog's legal-name rules, single-sourced in scanner.ts.
 
 /** Directories never worth walking into. */
 const SKIPPED_DIRECTORIES = new Set([
@@ -154,7 +155,7 @@ const SKIPPED_DIRECTORIES = new Set([
 const MAX_DEPTH = 32;
 
 export function isAplName(name: string): boolean {
-  return NAME_CHAR.test(name);
+  return isLegalName(name);
 }
 
 /**
