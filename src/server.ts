@@ -11,6 +11,7 @@ import {
   DiagnosticSeverity,
   DocumentSymbol,
   DocumentSymbolParams,
+  ErrorCodes,
   Location,
   LocationLink,
   Hover,
@@ -19,9 +20,15 @@ import {
   InitializeResult,
   MarkupKind,
   Position,
+  PrepareRenameParams,
   Range,
   ReferenceParams,
+  RenameParams,
+  ResponseError,
   SymbolKind,
+  TextDocumentEdit,
+  TextEdit,
+  WorkspaceEdit,
   TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 
@@ -46,6 +53,7 @@ import { scanLines, NAME_CHARS } from './analysis/scanner';
 import { ProjectModel } from './analysis/project';
 import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
+import { planRename, computeRename, isRefusal } from './analysis/rename';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -112,9 +120,8 @@ function applySettings(incoming: Partial<Settings>): void {
  * workspace: a client that opens a lone file with no folder must still get
  * completion, hover, symbols and diagnostics, none of which consult this.
  *
- * Nothing user-facing is built on it yet — go to definition (#10), references
- * (#11), rename (#12) and workspace symbols (#13) are the consumers, and no
- * capability for those is advertised.
+ * Go to definition (#10), find references (#11) and rename (#12) all consume it.
+ * Workspace symbols (#13) will; no capability for that is advertised.
  */
 let project = new ProjectModel();
 
@@ -123,6 +130,13 @@ let clientSupportsFolderEvents = false;
 
 /** Whether the client accepts LocationLink rather than plain Location. */
 let clientSupportsDefinitionLinks = false;
+
+/**
+ * Whether the client said it can perform a file rename as part of a workspace
+ * edit. Emitting one to a client that cannot would produce an edit it silently
+ * drops or rejects, so it is only offered when advertised.
+ */
+let clientSupportsFileRename = false;
 
 /** file:// URIs to filesystem paths, ignoring anything not on disk. */
 function toFsPath(uri: string): string | undefined {
@@ -184,6 +198,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   clientSupportsFolderEvents = params.capabilities.workspace?.workspaceFolders === true;
   clientSupportsDefinitionLinks =
     params.capabilities.textDocument?.definition?.linkSupport === true;
+  clientSupportsFileRename =
+    params.capabilities.workspace?.workspaceEdit?.resourceOperations?.includes('rename') === true;
 
   // Indexing happens after the reply, so a large tree cannot delay startup.
   const directories = workspaceDirectories(params);
@@ -200,6 +216,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentSymbolProvider: true,
       definitionProvider: true,
       referencesProvider: true,
+      renameProvider: { prepareProvider: true },
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -562,6 +579,89 @@ connection.onReferences(async (params: ReferenceParams): Promise<Location[] | nu
     uri: location.file === undefined ? params.textDocument.uri : pathToFileURL(location.file).href,
     range: toRange(location.range)
   }));
+});
+
+// -------------------------------------------------------------------- rename
+
+/**
+ * prepareRename. Returns the range the editor should let the user edit, or an
+ * error carrying the reason it refused, which clients surface to the user.
+ * Eligibility comes from the same planRename the rename itself calls.
+ */
+connection.onPrepareRename((params: PrepareRenameParams) => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const plan = planRename({
+    text: doc.getText(),
+    file: toFsPath(params.textDocument.uri),
+    position: params.position,
+    project,
+    liveText: liveTextOf
+  });
+
+  if (isRefusal(plan)) {
+    return new ResponseError(ErrorCodes.InvalidRequest, plan.detail);
+  }
+  return { range: toRange(plan.range), placeholder: plan.placeholder };
+});
+
+/**
+ * rename. The edit set is the proven reference set from #11, so only the final
+ * identifier of a qualified path is replaced and nothing that merely shares the
+ * spelling is touched.
+ *
+ * documentChanges is used rather than changes, because a file rename has to be a
+ * resource operation and the two must arrive in one edit to be applied together.
+ */
+connection.onRenameRequest(async (params: RenameParams): Promise<WorkspaceEdit | ResponseError> => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return new ResponseError(ErrorCodes.InvalidRequest, 'That document is not open.');
+
+  const result = await computeRename({
+    text: doc.getText(),
+    file: toFsPath(params.textDocument.uri),
+    position: params.position,
+    project,
+    newName: params.newName,
+    clientSupportsFileRename,
+    liveText: liveTextOf
+  });
+
+  if (isRefusal(result)) {
+    return new ResponseError(ErrorCodes.InvalidRequest, result.detail);
+  }
+
+  // Group the edits by document, preserving the order they were proved in.
+  const byUri = new Map<string, TextEdit[]>();
+  for (const edit of result.edits) {
+    const uri =
+      edit.file === undefined ? params.textDocument.uri : pathToFileURL(edit.file).href;
+    const list = byUri.get(uri) ?? [];
+    list.push({ range: toRange(edit.range), newText: edit.newText });
+    byUri.set(uri, list);
+  }
+
+  const documentChanges: (TextDocumentEdit | { kind: 'rename'; oldUri: string; newUri: string })[] =
+    [];
+  for (const [uri, edits] of [...byUri.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const open = documents.get(uri);
+    documentChanges.push({
+      textDocument: { uri, version: open ? open.version : null },
+      edits
+    });
+  }
+
+  // The file rename comes last, so the text edits apply to the old path.
+  if (result.fileRename) {
+    documentChanges.push({
+      kind: 'rename',
+      oldUri: pathToFileURL(result.fileRename.oldFile).href,
+      newUri: pathToFileURL(result.fileRename.newFile).href
+    });
+  }
+
+  return { documentChanges };
 });
 
 // --------------------------------------------------------------- diagnostics

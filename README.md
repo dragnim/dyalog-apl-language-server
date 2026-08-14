@@ -94,6 +94,14 @@ definition, so this is not a search for a spelling: asking for references to
 `#.Stats.Mean` will not return uses of `#.Finance.Mean`, and a `Mean` that is a
 function argument or a `;`-localised name is not a reference to either.
 
+**Rename.** Rename a definition and every reference that provably means it. The
+edit set is exactly the one find references proved, so renaming `#.Stats.Mean`
+leaves `#.Finance.Mean` alone, and only the final identifier changes —
+`#.Stats.Mean` becomes `#.Stats.Average`, qualifiers intact. Ambiguous targets,
+illegal replacement names and provable collisions are refused with a reason
+rather than guessed at. Objects named only by their filename, such as a bare dfn
+in a `.aplf`, are refused too: there is no name in the source to edit.
+
 **Project awareness.** The server understands the static structure of
 `]Link`-style source trees, mapping directories and supported APL files into a
 namespace and object model without a running interpreter: `Foo/Bar.aplf` is
@@ -102,9 +110,9 @@ object's name class, and a script that declares its own name takes that name.
 It follows `.linkconfig` settings such as `flatten`, decodes `caseCode`
 filenames, and refuses to guess where a source tree is contradictory.
 
-Go to definition and find references are built on this. Rename and workspace
-symbols will be; neither is implemented, and the server advertises no
-capability for them.
+Go to definition, find references and rename are built on this. Workspace
+symbols will be; it is not implemented, and the server advertises no capability
+for it.
 
 **Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
 Comments, character literals, numbers, system names, control structures, labels
@@ -165,9 +173,8 @@ need a reload. The other two settings take effect immediately.
 
 Without a running interpreter the server cannot know what a name *is*. In
 `foo bar baz`, whether `foo` is a function or an array depends on things that
-may not be in the file, so there is no rename yet and no "this is not a
-function" diagnostic. Everything it does report is something the interpreter
-would also reject.
+may not be in the file, so there is no "this is not a function" diagnostic.
+Everything it does report is something the interpreter would also reject.
 
 Go to definition works within that limit rather than around it. It resolves a
 name only where the source tree settles the question: a definition in the same
@@ -180,11 +187,15 @@ error.
 
 Find references works the same way, and inherits the same limits exactly: it
 asks the resolver about every candidate rather than comparing spellings, so a
-reference it cannot prove is simply not reported.
+reference it cannot prove is simply not reported. Rename then edits exactly that
+proven set, so it can never rename more than references would have found — and
+refuses outright when the target is ambiguous, the new name is not a legal
+Dyalog name, or the rename would collide with something the project model can
+see. A refused rename is the intended behaviour, not a gap.
 
 That ceiling rises as more of the project is understood statically, not by
-consulting an interpreter. Rename and workspace symbols build on the same
-`]Link` model, still inferred from the repository alone.
+consulting an interpreter. Workspace symbols will build on the same `]Link`
+model, still inferred from the repository alone.
 
 Attaching to a Dyalog process is not a planned stage and will not become one.
 Where something genuinely cannot be determined from the source, the server is
@@ -211,6 +222,7 @@ npm run symbols          # static symbol extraction, tested directly
 npm run project          # ]Link project model, against temporary source trees
 npm run definition       # name extraction and definition resolution
 npm run references       # provable references, not spelling matches
+npm run rename           # rename safety, refusals and collisions
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -239,6 +251,7 @@ src/analysis/project.ts  the ]Link source tree as namespaces and objects
 src/analysis/names.ts    the APL name under a cursor
 src/analysis/definitions.ts  what that name refers to, if anything
 src/analysis/references.ts   every occurrence that provably means the same thing
+src/analysis/rename.ts       whether a rename is safe, and the edits if it is
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -254,6 +267,7 @@ test/symbols.mjs       checks symbol extraction directly
 test/project.mjs       indexes temporary source trees and checks the mapping
 test/definition.mjs    name extraction and definition resolution
 test/references.mjs    reference identity, including same-name namespaces
+test/rename.mjs        rename eligibility, refusals, collisions and edits
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

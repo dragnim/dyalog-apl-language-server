@@ -110,12 +110,18 @@ function send(message) {
   server.stdin.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
 }
 
-function request(method, params) {
+/** Resolves with the whole reply, so an error response can be inspected. */
+function requestRaw(method, params) {
   const id = nextId++;
   return new Promise(resolve => {
     pending.set(id, resolve);
     send({ id, method, params });
   });
+}
+
+/** Resolves with just the result, which is undefined for an error reply. */
+async function request(method, params) {
+  return (await requestRaw(method, params)).result;
 }
 
 let buffer = Buffer.alloc(0);
@@ -131,7 +137,7 @@ server.stdout.on('data', chunk => {
     buffer = buffer.subarray(headerEnd + 4 + length);
     const message = JSON.parse(body);
     if (message.id !== undefined && pending.has(message.id)) {
-      pending.get(message.id)(message.result);
+      pending.get(message.id)(message);
       pending.delete(message.id);
     } else if (message.method) {
       notifications.push(message);
@@ -495,15 +501,13 @@ check(
   JSON.stringify(init.capabilities?.workspace)
 );
 
-// Go to definition (#10) and find references (#11) consume the model. Rename
-// (#12) and workspace symbols (#13) do not exist yet and must not be claimed.
-for (const capability of ['renameProvider', 'workspaceSymbolProvider']) {
-  check(
-    `${capability} is not advertised`,
-    init.capabilities?.[capability] === undefined,
-    `got ${JSON.stringify(init.capabilities?.[capability])}`
-  );
-}
+// Go to definition (#10), find references (#11) and rename (#12) consume the
+// model. Workspace symbols (#13) does not exist yet and must not be claimed.
+check(
+  'workspaceSymbolProvider is not advertised',
+  init.capabilities?.workspaceSymbolProvider === undefined,
+  `got ${JSON.stringify(init.capabilities?.workspaceSymbolProvider)}`
+);
 
 // ---------------------------------------------------------- go to definition
 
@@ -684,14 +688,141 @@ check(
 );
 check('a system name yields no references', refShape(await referencesAt(7, 2)).length === 0);
 
-// #12 and #13 are not implemented and must not be claimed.
-for (const capability of ['renameProvider', 'workspaceSymbolProvider']) {
-  check(
-    `${capability} is still not advertised`,
-    init.capabilities?.[capability] === undefined,
-    `got ${JSON.stringify(init.capabilities?.[capability])}`
-  );
-}
+// ------------------------------------------------------------------- rename
+
+section('rename');
+
+check(
+  'renameProvider is advertised with prepare support',
+  init.capabilities?.renameProvider?.prepareProvider === true,
+  JSON.stringify(init.capabilities?.renameProvider)
+);
+
+const prepareAt = (line, character) =>
+  request('textDocument/prepareRename', {
+    textDocument: { uri: callerUri },
+    position: { line, character }
+  });
+
+const prepared = await prepareAt(1, 14);
+check(
+  'prepareRename returns the name range only',
+  prepared?.range?.start?.character === 11 && prepared?.range?.end?.character === 15,
+  JSON.stringify(prepared)
+);
+check('and the current name as placeholder', prepared?.placeholder === 'Mean', JSON.stringify(prepared));
+
+const prepareRawAt = (line, character) =>
+  requestRaw('textDocument/prepareRename', {
+    textDocument: { uri: callerUri },
+    position: { line, character }
+  });
+
+const commentPrepare = await prepareRawAt(4, 5);
+check(
+  'prepareRename refuses inside a comment, with a reason',
+  commentPrepare.result == null && typeof commentPrepare.error?.message === 'string',
+  JSON.stringify(commentPrepare)
+);
+const systemPrepare = await prepareRawAt(7, 2);
+check(
+  'prepareRename refuses a system name, saying so',
+  systemPrepare.result == null && /System names/.test(systemPrepare.error?.message ?? ''),
+  JSON.stringify(systemPrepare)
+);
+
+const renameAt = (line, character, newName) =>
+  request('textDocument/rename', {
+    textDocument: { uri: callerUri },
+    position: { line, character },
+    newName
+  });
+
+const edit = await renameAt(1, 14, 'Average');
+check(
+  'rename returns documentChanges',
+  Array.isArray(edit?.documentChanges),
+  JSON.stringify(edit)
+);
+
+/** "basename:line:char→text", flattened across documents. */
+const editShape = workspaceEdit =>
+  (workspaceEdit?.documentChanges ?? [])
+    .filter(change => change.textDocument)
+    .flatMap(change =>
+      change.edits.map(
+        e =>
+          `${change.textDocument.uri.split('/').pop()}:${e.range.start.line}:` +
+          `${e.range.start.character}-${e.range.end.character}→${e.newText}`
+      )
+    );
+
+check(
+  'both proven uses and the declaration are edited',
+  editShape(edit).join(' ') ===
+    'Caller.aplf:1:11-15→Average Caller.aplf:2:3-7→Average Mean.aplf:0:3-7→Average',
+  editShape(edit).join(' ')
+);
+check(
+  'only the final identifier of #.Stats.Mean is replaced',
+  editShape(edit).every(s => /:\d+:\d+-\d+→Average$/.test(s)) &&
+    editShape(edit).every(s => {
+      const [, span] = /:(\d+-\d+)→/.exec(s);
+      const [from, to] = span.split('-').map(Number);
+      return to - from === 4;
+    }),
+  editShape(edit).join(' ')
+);
+check(
+  'the comment and the character literal are untouched',
+  !editShape(edit).some(s => s.startsWith('Caller.aplf:4:') || s.startsWith('Caller.aplf:5:')),
+  editShape(edit).join(' ')
+);
+
+// This client did not advertise the rename resource operation.
+check(
+  'no file rename is offered to a client that cannot perform one',
+  !(edit?.documentChanges ?? []).some(change => change.kind === 'rename'),
+  JSON.stringify((edit?.documentChanges ?? []).filter(c => c.kind))
+);
+
+// Open documents get a version, which lets the client reject a stale edit.
+check(
+  'edits for the open document carry its version',
+  (edit?.documentChanges ?? []).some(
+    change => change.textDocument?.uri === callerUri && change.textDocument?.version !== undefined
+  ),
+  JSON.stringify((edit?.documentChanges ?? []).map(c => c.textDocument))
+);
+
+const badName = await requestRaw('textDocument/rename', {
+  textDocument: { uri: callerUri },
+  position: { line: 1, character: 14 },
+  newName: '1Bad'
+});
+check(
+  'an illegal new name is refused, explaining what a legal name is',
+  badName.result == null && /legal Dyalog name/.test(badName.error?.message ?? ''),
+  JSON.stringify(badName)
+);
+
+const inComment = await requestRaw('textDocument/rename', {
+  textDocument: { uri: callerUri },
+  position: { line: 4, character: 5 },
+  newName: 'Average'
+});
+check(
+  'renaming from inside a comment is refused',
+  inComment.result == null && typeof inComment.error?.message === 'string',
+  JSON.stringify(inComment)
+);
+
+// #13 is not implemented and must not be claimed.
+check(
+  'workspaceSymbolProvider is still not advertised',
+  init.capabilities?.workspaceSymbolProvider === undefined,
+  `got ${JSON.stringify(init.capabilities?.workspaceSymbolProvider)}`
+);
 // --------------------------------------------------------------- shutdown
 
 await request('shutdown', null);

@@ -177,6 +177,20 @@ export function decodeCaseCode(stem: string): { name: string; hadCaseCode: boole
   return { name: characters.join(''), hadCaseCode: true };
 }
 
+/**
+ * Applies `caseCode`, the inverse of decodeCaseCode. Dyalog's documented example
+ * is `HelloWorld` → `HelloWorld-41`: the uppercase map 1000010000 reversed is
+ * 0000100001, which is 33 decimal and 41 octal. The base keeps its own casing;
+ * the suffix is what survives a case-insensitive filesystem.
+ */
+export function encodeCaseCode(name: string): string {
+  let bits = 0;
+  [...name].forEach((char, index) => {
+    if (char !== char.toLowerCase() && char === char.toUpperCase()) bits |= 1 << index;
+  });
+  return `${name}-${bits.toString(8)}`;
+}
+
 export interface FileIdentity {
   /** Object name taken from the filename. */
   name: string;
@@ -678,6 +692,11 @@ export class ProjectModel {
 
   rootDirectoryFor(file: string): string | undefined {
     return this.rootFor(file)?.directory;
+  }
+
+  /** The `.linkconfig` settings governing the root a file belongs to. */
+  linkSettingsFor(file: string): LinkSettings | undefined {
+    return this.rootFor(file)?.settings;
   }
 
   /**
