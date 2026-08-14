@@ -102,6 +102,15 @@ illegal replacement names and provable collisions are refused with a reason
 rather than guessed at. Objects named only by their filename, such as a bare dfn
 in a `.aplf`, are refused too: there is no name in the source to edit.
 
+**Code actions.** One so far, and APL-specific: **Localise Variable**. With the
+cursor on a variable assigned inside a traditional function or operator, the
+editor can add it to the header's local list — `∇R←Foo X` becomes
+`∇R←Foo X;Temp` — leaving every use of the name untouched, since localisation
+changes where a name is bound rather than how it is spelled. It is offered only
+where the source proves the name is a variable of that definition, so a name
+that is merely used, an argument, a result, or something already localised on a
+Locals Line is left alone.
+
 **Workspace symbols.** Search every statically known definition across the
 workspace — functions, operators, named dfns, scripted namespaces, classes,
 interfaces and arrays, plus the definitions inside a scripted object. Results
@@ -205,6 +214,12 @@ line of source to open. `.apla` array data and `.mipage` markup are catalogued
 as objects but never read as APL, since a name found in either would be an
 accident of their contents.
 
+Localise Variable follows the same instinct. It appears only when the name is
+assigned to at statement level in the enclosing definition, because that is the
+one thing the source can show. `R←Helper X` is not offered — nothing there says
+whether `Helper` is a variable of this function or a function defined elsewhere,
+and localising a function reference would quietly break the call.
+
 That ceiling rises as more of the project is understood statically, rather than
 by consulting an interpreter.
 
@@ -235,6 +250,7 @@ npm run definition       # name extraction and definition resolution
 npm run references       # provable references, not spelling matches
 npm run rename           # rename safety, refusals and collisions
 npm run workspace        # workspace symbol catalogue, queries and dedup
+npm run localise         # the Localise Variable action, and what it refuses
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -265,6 +281,7 @@ src/analysis/definitions.ts  what that name refers to, if anything
 src/analysis/references.ts   every occurrence that provably means the same thing
 src/analysis/rename.ts       whether a rename is safe, and the edits if it is
 src/analysis/workspace-symbols.ts  the searchable catalogue of definitions
+src/analysis/localise.ts     whether a name can be localised, and the edit
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -282,6 +299,7 @@ test/definition.mjs    name extraction and definition resolution
 test/references.mjs    reference identity, including same-name namespaces
 test/rename.mjs        rename eligibility, refusals, collisions and edits
 test/workspace-symbols.mjs  the catalogue, query matching and deduplication
+test/localise.mjs      the Localise Variable action, applied and compared
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

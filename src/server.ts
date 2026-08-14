@@ -5,6 +5,9 @@ import {
   TextDocumentSyncKind,
   CompletionItem,
   CompletionItemKind,
+  CodeAction,
+  CodeActionKind,
+  CodeActionParams,
   CompletionParams,
   DefinitionParams,
   Diagnostic,
@@ -56,6 +59,7 @@ import { ProjectModel } from './analysis/project';
 import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
 import { planRename, computeRename, isRefusal } from './analysis/rename';
+import { planLocalise, isLocaliseRefusal } from './analysis/localise';
 import {
   findWorkspaceSymbols,
   type WorkspaceSymbolKind
@@ -224,6 +228,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
       workspaceSymbolProvider: true,
+      codeActionProvider: { codeActionKinds: [CodeActionKind.RefactorRewrite] },
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -712,6 +717,52 @@ connection.onWorkspaceSymbol(async (params: WorkspaceSymbolParams): Promise<Symb
       range: toRange(entry.selectionRange)
     }
   }));
+});
+
+// ------------------------------------------------------------- code actions
+
+/**
+ * Whether the client asked for a kind this action belongs to. An `only` of
+ * `['quickfix']` must not be answered with a refactoring, and `['refactor']`
+ * must be, since `refactor.rewrite` is beneath it.
+ */
+function wants(only: string[] | undefined, kind: string): boolean {
+  if (only === undefined || only.length === 0) return true;
+  return only.some(requested => kind === requested || kind.startsWith(`${requested}.`));
+}
+
+/**
+ * Code actions. Localise Variable only, for now — refactor.rewrite rather than
+ * quickfix, because it is user-invoked and answers no diagnostic.
+ *
+ * All the judgement is in analysis/localise.ts; this turns one plan into one
+ * insertion. Localisation moves where a name is bound, not how it is spelled, so
+ * no use of the variable is edited.
+ */
+connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+  if (!wants(params.context.only, CodeActionKind.RefactorRewrite)) return [];
+
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  const plan = planLocalise({ text: doc.getText(), range: params.range });
+  if (isLocaliseRefusal(plan)) return [];
+
+  const insertion = Position.create(plan.insertAt.line, plan.insertAt.character);
+  return [
+    {
+      title: `Localise ${plan.name}`,
+      kind: CodeActionKind.RefactorRewrite,
+      edit: {
+        documentChanges: [
+          {
+            textDocument: { uri: params.textDocument.uri, version: doc.version },
+            edits: [{ range: Range.create(insertion, insertion), newText: plan.insertText }]
+          }
+        ]
+      }
+    }
+  ];
 });
 
 // --------------------------------------------------------------- diagnostics

@@ -888,6 +888,125 @@ check(
   'README.md contributed no symbol',
   !JSON.stringify(allSymbols).includes('README')
 );
+// -------------------------------------------------------------- code actions
+
+section('code actions: Localise Variable');
+
+check(
+  'codeActionProvider advertises the refactor.rewrite kind',
+  init.capabilities?.codeActionProvider?.codeActionKinds?.includes('refactor.rewrite') === true,
+  JSON.stringify(init.capabilities?.codeActionProvider)
+);
+
+// A live, unsaved document: the action must read this, not anything on disk.
+const localiseUri = pathToFileURL(path.join(workspace, 'Stats', 'Localise.aplf')).href;
+const LOCALISE_SOURCE = [
+  '∇R←Localise X;Existing',
+  ' Temp←X+1',
+  ' R←Temp×2',
+  ' ⍝ Ghost←1',
+  ' R←Helper R',
+  '∇'
+].join('\n');
+
+send({
+  method: 'textDocument/didOpen',
+  params: {
+    textDocument: { uri: localiseUri, languageId: 'apl', version: 7, text: LOCALISE_SOURCE }
+  }
+});
+
+const codeActionsAt = (line, character, only) =>
+  request('textDocument/codeAction', {
+    textDocument: { uri: localiseUri },
+    range: { start: { line, character }, end: { line, character } },
+    context: only === undefined ? {} : { only }
+  });
+
+const onTemp = await codeActionsAt(1, 3);
+check(
+  'one action is offered on Temp',
+  Array.isArray(onTemp) && onTemp.length === 1,
+  JSON.stringify(onTemp)
+);
+check('titled with British spelling', onTemp?.[0]?.title === 'Localise Temp', onTemp?.[0]?.title);
+check('kind refactor.rewrite', onTemp?.[0]?.kind === 'refactor.rewrite', onTemp?.[0]?.kind);
+
+const change = onTemp?.[0]?.edit?.documentChanges?.[0];
+check(
+  'the edit targets this document at its current version',
+  change?.textDocument?.uri === localiseUri && change?.textDocument?.version === 7,
+  JSON.stringify(change?.textDocument)
+);
+check('exactly one insertion', change?.edits?.length === 1, JSON.stringify(change?.edits));
+
+// Apply the edit and compare the whole resulting document.
+const applied = (() => {
+  const lines = LOCALISE_SOURCE.split('\n');
+  const e = change.edits[0];
+  lines[e.range.start.line] =
+    lines[e.range.start.line].slice(0, e.range.start.character) +
+    e.newText +
+    lines[e.range.start.line].slice(e.range.end.character);
+  return lines.join('\n');
+})();
+check(
+  'applying it appends ;Temp after the existing local',
+  applied ===
+    [
+      '∇R←Localise X;Existing;Temp',
+      ' Temp←X+1',
+      ' R←Temp×2',
+      ' ⍝ Ghost←1',
+      ' R←Helper R',
+      '∇'
+    ].join('\n'),
+  JSON.stringify(applied)
+);
+
+check(
+  'no action on an existing local',
+  (await codeActionsAt(0, 15)).length === 0,
+  JSON.stringify(await codeActionsAt(0, 15))
+);
+check(
+  'no action on the argument',
+  (await codeActionsAt(0, 12)).length === 0,
+  JSON.stringify(await codeActionsAt(0, 12))
+);
+check(
+  'no action on a name that is only used, never assigned',
+  (await codeActionsAt(4, 5)).length === 0,
+  JSON.stringify(await codeActionsAt(4, 5))
+);
+check(
+  'no action on a name that appears only in a comment',
+  (await codeActionsAt(3, 4)).length === 0,
+  JSON.stringify(await codeActionsAt(3, 4))
+);
+
+section('CodeActionContext.only');
+
+check('no only returns the action', (await codeActionsAt(1, 3, undefined)).length === 1);
+check(
+  "only ['refactor'] returns it, since refactor.rewrite is beneath it",
+  (await codeActionsAt(1, 3, ['refactor'])).length === 1,
+  JSON.stringify(await codeActionsAt(1, 3, ['refactor']))
+);
+check(
+  "only ['refactor.rewrite'] returns it",
+  (await codeActionsAt(1, 3, ['refactor.rewrite'])).length === 1
+);
+check(
+  "only ['quickfix'] returns nothing",
+  (await codeActionsAt(1, 3, ['quickfix'])).length === 0,
+  JSON.stringify(await codeActionsAt(1, 3, ['quickfix']))
+);
+check(
+  "only ['source.organizeImports'] returns nothing",
+  (await codeActionsAt(1, 3, ['source.organizeImports'])).length === 0
+);
+
 // --------------------------------------------------------------- shutdown
 
 await request('shutdown', null);
