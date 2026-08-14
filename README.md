@@ -87,6 +87,13 @@ a bare `Bar` does not jump merely because some `Bar` exists somewhere in the
 workspace, and a name defined by two files resolves to nothing rather than to
 whichever was indexed first.
 
+**Find references.** Find statically provable references to a definition,
+starting from either the definition or any use of it. Every candidate is
+resolved in its own file and namespace and kept only if it lands on the same
+definition, so this is not a search for a spelling: asking for references to
+`#.Stats.Mean` will not return uses of `#.Finance.Mean`, and a `Mean` that is a
+function argument or a `;`-localised name is not a reference to either.
+
 **Project awareness.** The server understands the static structure of
 `]Link`-style source trees, mapping directories and supported APL files into a
 namespace and object model without a running interpreter: `Foo/Bar.aplf` is
@@ -95,8 +102,8 @@ object's name class, and a script that declares its own name takes that name.
 It follows `.linkconfig` settings such as `flatten`, decodes `caseCode`
 filenames, and refuses to guess where a source tree is contradictory.
 
-Go to definition is built on this. Find references, rename and workspace
-symbols will be; none of those is implemented, and the server advertises no
+Go to definition and find references are built on this. Rename and workspace
+symbols will be; neither is implemented, and the server advertises no
 capability for them.
 
 **Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
@@ -171,9 +178,13 @@ that is not in the current space returns nothing rather than a guess. A name
 defined by two files returns nothing too, since Link itself treats that as an
 error.
 
+Find references works the same way, and inherits the same limits exactly: it
+asks the resolver about every candidate rather than comparing spellings, so a
+reference it cannot prove is simply not reported.
+
 That ceiling rises as more of the project is understood statically, not by
-consulting an interpreter. Find references, rename and workspace symbols build
-on the same `]Link` model, still inferred from the repository alone.
+consulting an interpreter. Rename and workspace symbols build on the same
+`]Link` model, still inferred from the repository alone.
 
 Attaching to a Dyalog process is not a planned stage and will not become one.
 Where something genuinely cannot be determined from the source, the server is
@@ -199,6 +210,7 @@ npm run controlwords     # colon words and grammar have not drifted apart
 npm run symbols          # static symbol extraction, tested directly
 npm run project          # ]Link project model, against temporary source trees
 npm run definition       # name extraction and definition resolution
+npm run references       # provable references, not spelling matches
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -226,6 +238,7 @@ src/analysis/symbols.ts  static extraction of the named things in a file
 src/analysis/project.ts  the ]Link source tree as namespaces and objects
 src/analysis/names.ts    the APL name under a cursor
 src/analysis/definitions.ts  what that name refers to, if anything
+src/analysis/references.ts   every occurrence that provably means the same thing
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -240,6 +253,7 @@ test/controlwords.mjs  checks the two colon word consumers stay in step
 test/symbols.mjs       checks symbol extraction directly
 test/project.mjs       indexes temporary source trees and checks the mapping
 test/definition.mjs    name extraction and definition resolution
+test/references.mjs    reference identity, including same-name namespaces
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

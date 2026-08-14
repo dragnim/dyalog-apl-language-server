@@ -495,9 +495,9 @@ check(
   JSON.stringify(init.capabilities?.workspace)
 );
 
-// Go to definition (#10) consumes the model. References (#11), rename (#12)
-// and workspace symbols (#13) do not exist yet and must not be claimed.
-for (const capability of ['referencesProvider', 'renameProvider', 'workspaceSymbolProvider']) {
+// Go to definition (#10) and find references (#11) consume the model. Rename
+// (#12) and workspace symbols (#13) do not exist yet and must not be claimed.
+for (const capability of ['renameProvider', 'workspaceSymbolProvider']) {
   check(
     `${capability} is not advertised`,
     init.capabilities?.[capability] === undefined,
@@ -610,8 +610,82 @@ check(
   `${JSON.stringify(afterEdit?.[0]?.targetSelectionRange)} — on disk the header is line 0`
 );
 
-// #11, #12 and #13 are not implemented and must not be claimed.
-for (const capability of ['referencesProvider', 'renameProvider', 'workspaceSymbolProvider']) {
+// ------------------------------------------------------------ find references
+
+section('find references');
+
+// The definition tests left Mean.aplf open with an unsaved line inserted above
+// its header. Close it so these assertions describe the file as it is on disk.
+send({ method: 'textDocument/didClose', params: { textDocument: { uri: meanUri } } });
+await new Promise(resolve => setTimeout(resolve, 100));
+
+check(
+  'referencesProvider is advertised',
+  init.capabilities?.referencesProvider === true,
+  JSON.stringify(init.capabilities?.referencesProvider)
+);
+
+const referencesAt = (line, character, includeDeclaration = true) =>
+  request('textDocument/references', {
+    textDocument: { uri: callerUri },
+    position: { line, character },
+    context: { includeDeclaration }
+  });
+
+/** "basename:line:char", relative to the workspace, for readable assertions. */
+const refShape = locations =>
+  (locations ?? []).map(
+    l => `${l.uri.split('/').pop()}:${l.range.start.line}:${l.range.start.character}`
+  );
+
+// The caller has two provable uses of Mean — the qualified one and the bare
+// one — plus mentions in a comment and a string that must not count.
+const refs = await referencesAt(1, 14);
+check(
+  'both real uses and the declaration are returned',
+  refShape(refs).join(' ') === 'Caller.aplf:1:11 Caller.aplf:2:3 Mean.aplf:0:3',
+  refShape(refs).join(' ')
+);
+check(
+  'the mention in a comment is excluded',
+  !refShape(refs).some(s => s.startsWith('Caller.aplf:4:')),
+  refShape(refs).join(' ')
+);
+check(
+  'the mention in a character literal is excluded',
+  !refShape(refs).some(s => s.startsWith('Caller.aplf:5:')),
+  refShape(refs).join(' ')
+);
+check(
+  'each range covers exactly the name',
+  (refs ?? []).every(l => l.range.end.character - l.range.start.character === 4),
+  JSON.stringify((refs ?? []).map(l => l.range))
+);
+
+const withoutDecl = await referencesAt(1, 14, false);
+check(
+  'includeDeclaration:false drops the declaration only',
+  refShape(withoutDecl).join(' ') === 'Caller.aplf:1:11 Caller.aplf:2:3',
+  refShape(withoutDecl).join(' ')
+);
+
+// Starting from the bare use must give the same answer as the qualified one.
+const fromBare = await referencesAt(2, 5);
+check(
+  'starting from a bare use gives the same set',
+  refShape(fromBare).join(' ') === refShape(refs).join(' '),
+  `${refShape(fromBare).join(' ')} vs ${refShape(refs).join(' ')}`
+);
+
+check(
+  'a name in a comment yields no references',
+  refShape(await referencesAt(4, 5)).length === 0,
+  refShape(await referencesAt(4, 5)).join(' ')
+);
+check('a system name yields no references', refShape(await referencesAt(7, 2)).length === 0);
+
+// #12 and #13 are not implemented and must not be claimed.
+for (const capability of ['renameProvider', 'workspaceSymbolProvider']) {
   check(
     `${capability} is still not advertised`,
     init.capabilities?.[capability] === undefined,

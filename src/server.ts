@@ -20,6 +20,7 @@ import {
   MarkupKind,
   Position,
   Range,
+  ReferenceParams,
   SymbolKind,
   TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
@@ -44,6 +45,7 @@ import { extractSymbols, type AplSymbol, type AplSymbolKind } from './analysis/s
 import { scanLines } from './analysis/scanner';
 import { ProjectModel } from './analysis/project';
 import { resolveDefinition } from './analysis/definitions';
+import { findReferences } from './analysis/references';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -197,6 +199,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       hoverProvider: true,
       documentSymbolProvider: true,
       definitionProvider: true,
+      referencesProvider: true,
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -511,13 +514,7 @@ connection.onDefinition((params: DefinitionParams): Location | LocationLink[] | 
     position: params.position,
     project,
     // Another open buffer may have moved since it was last saved.
-    liveText: file => {
-      for (const open of documents.all()) {
-        const openPath = toFsPath(open.uri);
-        if (openPath && openPath === file) return open.getText();
-      }
-      return undefined;
-    }
+    liveText: liveTextOf
   });
   if (!target) return null;
 
@@ -533,6 +530,38 @@ connection.onDefinition((params: DefinitionParams): Location | LocationLink[] | 
     ];
   }
   return { uri, range: toRange(target.selectionRange) };
+});
+
+/** The live text of any open buffer, so unsaved edits are what gets analysed. */
+function liveTextOf(file: string): string | undefined {
+  for (const open of documents.all()) {
+    const openPath = toFsPath(open.uri);
+    if (openPath && openPath === file) return open.getText();
+  }
+  return undefined;
+}
+
+/**
+ * Find references. Every judgement lives in analysis/references.ts, which
+ * proves each occurrence by resolving it rather than matching its spelling.
+ */
+connection.onReferences(async (params: ReferenceParams): Promise<Location[] | null> => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+
+  const { locations } = await findReferences({
+    text: doc.getText(),
+    file: toFsPath(params.textDocument.uri),
+    position: params.position,
+    project,
+    includeDeclaration: params.context?.includeDeclaration ?? true,
+    liveText: liveTextOf
+  });
+
+  return locations.map(location => ({
+    uri: location.file === undefined ? params.textDocument.uri : pathToFileURL(location.file).href,
+    range: toRange(location.range)
+  }));
 });
 
 // --------------------------------------------------------------- diagnostics
