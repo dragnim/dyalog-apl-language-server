@@ -159,6 +159,26 @@ export function isAplName(name: string): boolean {
 }
 
 /**
+ * Whether a project file's *contents* are ordinary APL source, and so may be
+ * read for definitions and for the name the file declares.
+ *
+ * `.apla` holds an array: array notation, or with a plain-text sub-extension raw
+ * character data (docs/Usage/Arrays.md). `.mipage` is a MiServer page — markup
+ * with APL embedded in it. Neither is a stream of APL definitions, so parsing
+ * either would invent names out of data or prose. The object itself is still a
+ * real project object; only its text is off limits.
+ *
+ * Single-sourced here, next to the extension table, because three things depend
+ * on it: which files contribute a declared name (below), which are scanned for
+ * references, and which yield nested workspace symbols.
+ */
+export function isAplSourceFile(file: string, kind: ObjectKind): boolean {
+  if (kind === 'array') return false;
+  if (path.extname(file).toLowerCase() === '.mipage') return false;
+  return true;
+}
+
+/**
  * Undoes `caseCode`. The suffix is a reverse binary map of which characters are
  * uppercase, written in octal, so bit i of the value corresponds to character i.
  * `HelloWorld-41` decodes to 41₈ = 33₁₀ = bits 0 and 5, giving H and W.
@@ -418,8 +438,10 @@ export class ProjectRoot {
     let range: SourceRange | undefined;
     let selectionRange: SourceRange | undefined;
 
-    // Only read the file when its contents could name the object.
-    if (kind !== 'array') {
+    // Only read the file when its contents are APL source that could name it.
+    // A .mipage is markup and a .apla is data; a name lifted out of either would
+    // be an accident of its content.
+    if (isAplSourceFile(full, kind)) {
       try {
         const source = await fs.readFile(full, 'utf8');
         const declared = declaredIdentity(source, kind);

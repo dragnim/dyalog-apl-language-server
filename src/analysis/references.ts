@@ -33,7 +33,7 @@ import { scanLines, NAME_CHARS } from './scanner';
 import type { SourceRange } from './symbols';
 import { nameAt } from './names';
 import { resolveDefinition, type DefinitionTarget } from './definitions';
-import type { ProjectModel } from './project';
+import { isAplSourceFile, type ProjectModel } from './project';
 
 export interface ReferenceLocation {
   /** Absolute path, or undefined for an untitled document. */
@@ -63,26 +63,6 @@ export interface ReferenceRequest {
   includeDeclaration: boolean;
   /** Live text of any open document, preferred over what is on disk. */
   liveText?: (file: string) => string | undefined;
-}
-
-/**
- * Object kinds and extensions that are not ordinary APL source and so are not
- * scanned for name references.
- *
- * `.apla` holds an array: either APL array notation or, with a plain-text
- * sub-extension, raw character data (docs/Usage/Arrays.md). Neither contains
- * name references, and the plain-text form is arbitrary text in which a match
- * would be meaningless.
- *
- * `.mipage` is a MiServer page: markup with APL embedded in it, not ordinary
- * APL source. Tokenising it as if it were would invent candidates out of prose.
- * Link lists it as a code extension, so the project model still indexes the
- * object; it is simply not searched.
- */
-function isSearchableSource(file: string, kind: string): boolean {
-  if (kind === 'array') return false;
-  if (path.extname(file).toLowerCase() === '.mipage') return false;
-  return true;
 }
 
 /** Where a resolved definition actually lives, for comparison. */
@@ -171,7 +151,7 @@ export async function findReferences(request: ReferenceRequest): Promise<Referen
       for (const object of request.project.objects()) {
         const file = object.location.file;
         if (request.project.rootDirectoryFor(file) !== root) continue;
-        if (!isSearchableSource(file, object.kind)) continue;
+        if (!isAplSourceFile(file, object.kind)) continue;
         if (path.resolve(file) === path.resolve(request.file)) continue; // already have it live
         const text = await textFor(file, request.liveText);
         if (text !== undefined) documents.push({ file, text });

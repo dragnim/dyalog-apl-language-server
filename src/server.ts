@@ -25,10 +25,12 @@ import {
   ReferenceParams,
   RenameParams,
   ResponseError,
+  SymbolInformation,
   SymbolKind,
   TextDocumentEdit,
   TextEdit,
   WorkspaceEdit,
+  WorkspaceSymbolParams,
   TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 
@@ -54,6 +56,10 @@ import { ProjectModel } from './analysis/project';
 import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
 import { planRename, computeRename, isRefusal } from './analysis/rename';
+import {
+  findWorkspaceSymbols,
+  type WorkspaceSymbolKind
+} from './analysis/workspace-symbols';
 
 import { KEYBOARD_LOCALES, glyphsForLocale, prefixKeyFor } from './keyboard';
 
@@ -217,6 +223,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
+      workspaceSymbolProvider: true,
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -662,6 +669,49 @@ connection.onRenameRequest(async (params: RenameParams): Promise<WorkspaceEdit |
   }
 
   return { documentChanges };
+});
+
+// --------------------------------------------------------- workspace symbols
+
+/**
+ * The closest truthful standard kinds. LSP has no APL-shaped ones, so an array
+ * becomes Variable — it is a named value rather than something callable — and a
+ * generic .apl or .dyalog file, whose class the extension does not state, becomes
+ * File rather than being guessed at as a Function.
+ */
+const WORKSPACE_SYMBOL_KINDS: Record<WorkspaceSymbolKind, SymbolKind> = {
+  function: SymbolKind.Function,
+  operator: SymbolKind.Operator,
+  namespace: SymbolKind.Namespace,
+  class: SymbolKind.Class,
+  interface: SymbolKind.Interface,
+  array: SymbolKind.Variable,
+  code: SymbolKind.File
+};
+
+/**
+ * workspace/symbol. SymbolInformation rather than the newer WorkspaceSymbol:
+ * every LSP client in the README's list consumes it, it needs no capability
+ * negotiation, and its containerName is exactly the slot qualification belongs
+ * in. WorkspaceSymbol's advantage is deferring the location to a resolve round
+ * trip, which is no use here because the ranges are already known.
+ */
+connection.onWorkspaceSymbol(async (params: WorkspaceSymbolParams): Promise<SymbolInformation[]> => {
+  const entries = await findWorkspaceSymbols({
+    project,
+    query: params.query,
+    liveText: liveTextOf
+  });
+
+  return entries.map(entry => ({
+    name: entry.name,
+    kind: WORKSPACE_SYMBOL_KINDS[entry.kind],
+    containerName: entry.containerName,
+    location: {
+      uri: pathToFileURL(entry.file).href,
+      range: toRange(entry.selectionRange)
+    }
+  }));
 });
 
 // --------------------------------------------------------------- diagnostics

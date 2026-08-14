@@ -102,6 +102,12 @@ illegal replacement names and provable collisions are refused with a reason
 rather than guessed at. Objects named only by their filename, such as a bare dfn
 in a `.aplf`, are refused too: there is no name in the source to edit.
 
+**Workspace symbols.** Search every statically known definition across the
+workspace — functions, operators, named dfns, scripted namespaces, classes,
+interfaces and arrays, plus the definitions inside a scripted object. Results
+carry their namespace as the container, so two `Mean`s in different namespaces
+stay distinct, and each object appears once however many ways it is known.
+
 **Project awareness.** The server understands the static structure of
 `]Link`-style source trees, mapping directories and supported APL files into a
 namespace and object model without a running interpreter: `Foo/Bar.aplf` is
@@ -110,9 +116,8 @@ object's name class, and a script that declares its own name takes that name.
 It follows `.linkconfig` settings such as `flatten`, decodes `caseCode`
 filenames, and refuses to guess where a source tree is contradictory.
 
-Go to definition, find references and rename are built on this. Workspace
-symbols will be; it is not implemented, and the server advertises no capability
-for it.
+Go to definition, find references, rename and workspace symbols are all built
+on this.
 
 **Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
 Comments, character literals, numbers, system names, control structures, labels
@@ -193,9 +198,15 @@ refuses outright when the target is ambiguous, the new name is not a legal
 Dyalog name, or the rename would collide with something the project model can
 see. A refused rename is the intended behaviour, not a gap.
 
-That ceiling rises as more of the project is understood statically, not by
-consulting an interpreter. Workspace symbols will build on the same `]Link`
-model, still inferred from the repository alone.
+Workspace symbol search is the same story in miniature: it lists what the
+source tree states, so a name defined by two files is offered as neither, and a
+directory-backed namespace contributes no entry of its own because there is no
+line of source to open. `.apla` array data and `.mipage` markup are catalogued
+as objects but never read as APL, since a name found in either would be an
+accident of their contents.
+
+That ceiling rises as more of the project is understood statically, rather than
+by consulting an interpreter.
 
 Attaching to a Dyalog process is not a planned stage and will not become one.
 Where something genuinely cannot be determined from the source, the server is
@@ -223,6 +234,7 @@ npm run project          # ]Link project model, against temporary source trees
 npm run definition       # name extraction and definition resolution
 npm run references       # provable references, not spelling matches
 npm run rename           # rename safety, refusals and collisions
+npm run workspace        # workspace symbol catalogue, queries and dedup
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -252,6 +264,7 @@ src/analysis/names.ts    the APL name under a cursor
 src/analysis/definitions.ts  what that name refers to, if anything
 src/analysis/references.ts   every occurrence that provably means the same thing
 src/analysis/rename.ts       whether a rename is safe, and the edits if it is
+src/analysis/workspace-symbols.ts  the searchable catalogue of definitions
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -268,6 +281,7 @@ test/project.mjs       indexes temporary source trees and checks the mapping
 test/definition.mjs    name extraction and definition resolution
 test/references.mjs    reference identity, including same-name namespaces
 test/rename.mjs        rename eligibility, refusals, collisions and edits
+test/workspace-symbols.mjs  the catalogue, query matching and deduplication
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

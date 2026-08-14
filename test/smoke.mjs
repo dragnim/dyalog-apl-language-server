@@ -501,12 +501,15 @@ check(
   JSON.stringify(init.capabilities?.workspace)
 );
 
-// Go to definition (#10), find references (#11) and rename (#12) consume the
-// model. Workspace symbols (#13) does not exist yet and must not be claimed.
+// Go to definition (#10), find references (#11), rename (#12) and workspace
+// symbols (#13) all consume the model; each is asserted in its own section.
 check(
-  'workspaceSymbolProvider is not advertised',
-  init.capabilities?.workspaceSymbolProvider === undefined,
-  `got ${JSON.stringify(init.capabilities?.workspaceSymbolProvider)}`
+  'the model is consumed by every navigation feature',
+  init.capabilities?.definitionProvider === true &&
+    init.capabilities?.referencesProvider === true &&
+    init.capabilities?.renameProvider?.prepareProvider === true &&
+    init.capabilities?.workspaceSymbolProvider === true,
+  JSON.stringify(init.capabilities)
 );
 
 // ---------------------------------------------------------- go to definition
@@ -817,11 +820,73 @@ check(
   JSON.stringify(inComment)
 );
 
-// #13 is not implemented and must not be claimed.
+// ------------------------------------------------------------ workspace symbols
+
+section('workspace symbols');
+
 check(
-  'workspaceSymbolProvider is still not advertised',
-  init.capabilities?.workspaceSymbolProvider === undefined,
-  `got ${JSON.stringify(init.capabilities?.workspaceSymbolProvider)}`
+  'workspaceSymbolProvider is advertised',
+  init.capabilities?.workspaceSymbolProvider === true,
+  JSON.stringify(init.capabilities?.workspaceSymbolProvider)
+);
+
+const workspaceSymbols = query => request('workspace/symbol', { query });
+
+/** "container.name:kind@basename:line:char" for readable assertions. */
+const wsShape = entries =>
+  (entries ?? []).map(
+    e =>
+      `${e.containerName}.${e.name}:${e.kind}@${e.location.uri.split('/').pop()}` +
+      `:${e.location.range.start.line}:${e.location.range.start.character}`
+  );
+
+// The workspace fixture holds Stats/Mean.aplf and Stats/Sum.aplf.
+const allSymbols = await workspaceSymbols('');
+check(
+  'both project objects are catalogued with their container and kind',
+  wsShape(allSymbols).join(' ') ===
+    '#.Stats.Mean:12@Mean.aplf:0:3 #.Stats.Sum:12@Sum.aplf:0:0',
+  wsShape(allSymbols).join(' ')
+);
+check(
+  'SymbolKind.Function is used for both',
+  (allSymbols ?? []).every(e => e.kind === 12),
+  JSON.stringify((allSymbols ?? []).map(e => e.kind))
+);
+check(
+  'containerName carries the namespace',
+  (allSymbols ?? []).every(e => e.containerName === '#.Stats'),
+  JSON.stringify((allSymbols ?? []).map(e => e.containerName))
+);
+check(
+  'the declaration location is the name, not line 0',
+  allSymbols?.find(e => e.name === 'Mean')?.location.range.start.character === 3,
+  JSON.stringify(allSymbols?.find(e => e.name === 'Mean')?.location)
+);
+check(
+  'a bare dfn points at the start of its file',
+  allSymbols?.find(e => e.name === 'Sum')?.location.range.start.line === 0,
+  JSON.stringify(allSymbols?.find(e => e.name === 'Sum')?.location)
+);
+
+check(
+  'a query filters case-insensitively',
+  wsShape(await workspaceSymbols('MEAN')).length === 1 &&
+    (await workspaceSymbols('MEAN'))[0].name === 'Mean',
+  JSON.stringify(await workspaceSymbols('MEAN'))
+);
+check(
+  'a query matching nothing returns nothing',
+  (await workspaceSymbols('no-such-symbol')).length === 0
+);
+check(
+  'each object appears once, not once per source of truth',
+  (await workspaceSymbols('Mean')).length === 1,
+  JSON.stringify(await workspaceSymbols('Mean'))
+);
+check(
+  'README.md contributed no symbol',
+  !JSON.stringify(allSymbols).includes('README')
 );
 // --------------------------------------------------------------- shutdown
 

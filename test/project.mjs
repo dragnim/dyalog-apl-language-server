@@ -349,6 +349,33 @@ check(
   model.objects().some(o => o.qualifiedName === '#.Empty')
 );
 
+section('data and markup are not read for a declared name');
+
+// A .mipage is markup with APL embedded. If its contents are parsed, a single
+// ∇ header in the markup becomes the object's name and class — so Home.mipage
+// would be catalogued as the function #.Ghost. Only one definition is used
+// deliberately: with two, declaredIdentity bails out and hides the bug.
+const markup = await fixture({
+  'Home.mipage': ['<html>', '∇R←Ghost X', ' R←X', '∇', '</html>', ''].join('\n'),
+  'Data.mat.apla': ['∇R←AlsoGhost X', ' R←X', '∇', ''].join('\n')
+});
+model = await ProjectModel.index([markup]);
+check(
+  'a .mipage keeps its filename identity and code kind',
+  kinds(model).includes('#.Home:code'),
+  kinds(model).join(' ')
+);
+check(
+  'an array keeps its filename identity',
+  kinds(model).includes('#.Data:array'),
+  kinds(model).join(' ')
+);
+check(
+  'no name was lifted out of either file',
+  !JSON.stringify(model.objects()).includes('Ghost'),
+  kinds(model).join(' ')
+);
+
 section('ignored directories');
 
 const ignored = await fixture({
