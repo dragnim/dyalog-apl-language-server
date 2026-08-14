@@ -66,9 +66,23 @@ export type ObjectKind =
   /** `.apl`, `.dyalog`, `.mipage`: code whose class the extension does not state */
   | 'code';
 
+/** One file's claim on a name, with where in it the claim is made. */
+export interface ConflictingDefinition {
+  file: string;
+  /** Where the declaration sits, when the source states a name. */
+  range?: SourceRange;
+  /** Just the declared name, when the source states one. */
+  selectionRange?: SourceRange;
+}
+
 export type ProjectProblem =
-  /** Two or more files claim the same name in one namespace. Link rejects this. */
-  | { kind: 'duplicate-definition'; name: string; paths: string[] }
+  /**
+   * Two or more files claim the same name in one namespace. Link rejects this:
+   * "There must be exactly one file in the directory per named item"
+   * (Dyalog/link, docs/Discussion/TechDetails.md). Every claimant is recorded,
+   * not just whichever was indexed second, so all of them can be reported.
+   */
+  | { kind: 'duplicate-definition'; name: string; definitions: ConflictingDefinition[] }
   /** The script declares one name and the file is called another. */
   | { kind: 'name-mismatch'; path: string; declared: string; fromFilename: string }
   /** A filename that cannot be an APL name, so nothing can be mapped from it. */
@@ -489,7 +503,11 @@ export class ProjectRoot {
         this.problems.push({
           kind: 'duplicate-definition',
           name: objects[0].qualifiedName,
-          paths: objects.map(o => o.location.file)
+          definitions: objects.map(o => ({
+            file: o.location.file,
+            range: o.location.range,
+            selectionRange: o.location.selectionRange
+          }))
         });
       }
       void name;
@@ -573,7 +591,9 @@ export class ProjectRoot {
       }
     }
     this.problems = this.problems.filter(
-      p => !('path' in p && p.path === file) && !('paths' in p && p.paths.includes(file))
+      p =>
+        !('path' in p && p.path === file) &&
+        !('definitions' in p && p.definitions.some(d => d.file === file))
     );
 
     let exists = true;

@@ -1007,6 +1007,155 @@ check(
   (await codeActionsAt(1, 3, ['source.organizeImports'])).length === 0
 );
 
+// ------------------------------------------------------- project diagnostics
+
+section('project diagnostics');
+
+/** The most recent publication for a URI, rather than every one ever sent. */
+const latestDiagnosticsFor = u => {
+  const all = notifications.filter(
+    n => n.method === 'textDocument/publishDiagnostics' && n.params.uri === u
+  );
+  return all.length === 0 ? undefined : all[all.length - 1].params.diagnostics;
+};
+
+const conflictPath = path.join(workspace, 'Stats', 'Mean.apln');
+const conflictUri = pathToFileURL(conflictPath).href;
+
+// Introduce a real conflict: Mean.apln and Mean.aplf both claim #.Stats.Mean.
+await fsp.writeFile(conflictPath, ':Namespace Mean\n:EndNamespace\n', 'utf8');
+send({
+  method: 'workspace/didChangeWatchedFiles',
+  params: { changes: [{ uri: conflictUri, type: 1 }] }
+});
+await new Promise(resolve => setTimeout(resolve, 500));
+
+const meanDiagnostics = latestDiagnosticsFor(meanUri) ?? [];
+const conflictDiagnostics = latestDiagnosticsFor(conflictUri) ?? [];
+
+check(
+  'the conflict is reported on the .aplf',
+  meanDiagnostics.some(d => d.code === 'link-duplicate-object'),
+  JSON.stringify(meanDiagnostics)
+);
+check(
+  'and on the .apln — both sides, not just one',
+  conflictDiagnostics.some(d => d.code === 'link-duplicate-object'),
+  JSON.stringify(conflictDiagnostics)
+);
+check(
+  'as an Error',
+  meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.severity === 1,
+  JSON.stringify(meanDiagnostics)
+);
+check(
+  'under the same source as the lexical diagnostics',
+  meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.source === 'dyalog-apl',
+  JSON.stringify(meanDiagnostics)
+);
+check(
+  'the message names the qualified object',
+  /#\.Stats\.Mean/.test(
+    meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.message ?? ''
+  ),
+  meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.message
+);
+check(
+  'related information points at the other file',
+  meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.relatedInformation?.[0]?.location
+    ?.uri === conflictUri,
+  JSON.stringify(
+    meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.relatedInformation
+  )
+);
+check(
+  'it points at the declaration name, not line 0 character 0',
+  meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.range.start.character === 3,
+  JSON.stringify(meanDiagnostics.find(d => d.code === 'link-duplicate-object')?.range)
+);
+
+section('project and lexical diagnostics are published together');
+
+// Open the conflicting file with a lexical error in the buffer as well. The two
+// diagnostic sources must not erase one another.
+send({
+  method: 'textDocument/didOpen',
+  params: {
+    textDocument: {
+      uri: conflictUri,
+      languageId: 'apl',
+      version: 1,
+      text: ':Namespace Mean\n    broken←{(+/⍵)÷≢⍵\n:EndNamespace\n'
+    }
+  }
+});
+await new Promise(resolve => setTimeout(resolve, 400));
+
+const merged = latestDiagnosticsFor(conflictUri) ?? [];
+check(
+  'the lexical error is present',
+  merged.some(d => /Unclosed \{/.test(d.message)),
+  JSON.stringify(merged.map(d => d.message))
+);
+check(
+  'the project error is still present alongside it',
+  merged.some(d => d.code === 'link-duplicate-object'),
+  JSON.stringify(merged.map(d => d.message))
+);
+check(
+  'exactly two diagnostics, one of each',
+  merged.length === 2,
+  JSON.stringify(merged.map(d => ({ code: d.code, message: d.message })))
+);
+check(
+  'sorted by position',
+  merged[0].range.start.line <= merged[1].range.start.line,
+  JSON.stringify(merged.map(d => d.range.start))
+);
+
+section('resolving the conflict clears the diagnostics');
+
+await fsp.rm(conflictPath);
+send({
+  method: 'workspace/didChangeWatchedFiles',
+  params: { changes: [{ uri: conflictUri, type: 3 }] }
+});
+await new Promise(resolve => setTimeout(resolve, 500));
+
+const meanAfter = latestDiagnosticsFor(meanUri) ?? [];
+check(
+  'the remaining file is clean again, without a restart',
+  !meanAfter.some(d => d.code === 'link-duplicate-object'),
+  JSON.stringify(meanAfter)
+);
+check(
+  'and it received an actual clearing publication',
+  meanAfter.length === 0,
+  JSON.stringify(meanAfter)
+);
+
+// The deleted file is still open in the editor, so its lexical error survives
+// while its project error goes.
+const conflictAfter = latestDiagnosticsFor(conflictUri) ?? [];
+check(
+  'the deleted file no longer has a project error',
+  !conflictAfter.some(d => d.code === 'link-duplicate-object'),
+  JSON.stringify(conflictAfter)
+);
+check(
+  'but its lexical error is untouched, since the buffer is still open',
+  conflictAfter.some(d => /Unclosed \{/.test(d.message)),
+  JSON.stringify(conflictAfter.map(d => d.message))
+);
+
+section('a healthy file is never diagnosed');
+
+check(
+  'Sum.aplf has no diagnostics at all',
+  (latestDiagnosticsFor(sumUri) ?? []).length === 0,
+  JSON.stringify(latestDiagnosticsFor(sumUri))
+);
+
 // --------------------------------------------------------------- shutdown
 
 await request('shutdown', null);

@@ -79,6 +79,12 @@ inside comments and strings are ignored, the doubled-quote escape is handled, an
 brackets balance across the whole file so multi-line array notation does not
 produce false errors.
 
+**Project diagnostics.** One `]Link` problem is reported, because it is the one
+Link itself calls an error: two files claiming the same object name. Both files
+are marked, each pointing at the other, and the error clears as soon as the
+conflict is resolved. A filename that merely differs from the name its script
+declares is *not* reported — Link permits that, so flagging it would be wrong.
+
 **Go to definition.** Navigate a statically resolvable name to its source: a
 definition in the same file, a sibling in the same `]Link` namespace, or a
 qualified path such as `#.Stats.Mean`. Navigation lands on the defined name
@@ -207,6 +213,13 @@ refuses outright when the target is ambiguous, the new name is not a legal
 Dyalog name, or the rename would collide with something the project model can
 see. A refused rename is the intended behaviour, not a gap.
 
+Project diagnostics are narrow for the same reason. The model records three
+kinds of problem and only one of them is reported: two files claiming one name,
+which Link states is an error. A filename disagreeing with a script's declared
+name is permitted by Link, and a directory whose name could not be an APL name
+is simply outside the tree rather than broken — so neither is reported, however
+tempting a warning would be.
+
 Workspace symbol search is the same story in miniature: it lists what the
 source tree states, so a name defined by two files is offered as neither, and a
 directory-backed namespace contributes no entry of its own because there is no
@@ -251,6 +264,7 @@ npm run references       # provable references, not spelling matches
 npm run rename           # rename safety, refusals and collisions
 npm run workspace        # workspace symbol catalogue, queries and dedup
 npm run localise         # the Localise Variable action, and what it refuses
+npm run projectdiag      # which project problems become diagnostics, and which not
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -282,6 +296,7 @@ src/analysis/references.ts   every occurrence that provably means the same thing
 src/analysis/rename.ts       whether a rename is safe, and the edits if it is
 src/analysis/workspace-symbols.ts  the searchable catalogue of definitions
 src/analysis/localise.ts     whether a name can be localised, and the edit
+src/analysis/project-diagnostics.ts  which project problems are user-facing errors
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -300,6 +315,7 @@ test/references.mjs    reference identity, including same-name namespaces
 test/rename.mjs        rename eligibility, refusals, collisions and edits
 test/workspace-symbols.mjs  the catalogue, query matching and deduplication
 test/localise.mjs      the Localise Variable action, applied and compared
+test/project-diagnostics.mjs  the diagnostic projection, and what it withholds
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

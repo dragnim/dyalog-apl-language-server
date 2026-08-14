@@ -11,6 +11,7 @@ import {
   CompletionParams,
   DefinitionParams,
   Diagnostic,
+  DiagnosticRelatedInformation,
   DiagnosticSeverity,
   DocumentSymbol,
   DocumentSymbolParams,
@@ -60,6 +61,10 @@ import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
 import { planRename, computeRename, isRefusal } from './analysis/rename';
 import { planLocalise, isLocaliseRefusal } from './analysis/localise';
+import {
+  projectDiagnostics,
+  type ProjectDiagnostic
+} from './analysis/project-diagnostics';
 import {
   findWorkspaceSymbols,
   type WorkspaceSymbolKind
@@ -181,6 +186,7 @@ async function indexWorkspace(directories: string[]): Promise<void> {
   if (directories.length === 0) {
     project = new ProjectModel();
     connection.console.info('No workspace folder; project model is empty.');
+    refreshProjectDiagnostics();
     return;
   }
   try {
@@ -192,12 +198,14 @@ async function indexWorkspace(directories: string[]): Promise<void> {
       `Indexed ${objects} object(s) in ${namespaces} namespace(s) across ` +
         `${directories.length} root(s); ${problems} problem(s).`
     );
+    refreshProjectDiagnostics();
   } catch (error) {
     // Indexing must never take the server down: everything else still works.
     project = new ProjectModel();
     connection.console.warn(
       `Could not index the workspace: ${error instanceof Error ? error.message : String(error)}`
     );
+    refreshProjectDiagnostics();
   }
 }
 
@@ -251,7 +259,7 @@ connection.onDidChangeConfiguration(change => {
       );
     }
   }
-  for (const doc of documents.all()) publishDiagnostics(doc);
+  for (const doc of documents.all()) publishFor(doc.uri);
 });
 
 // ---------------------------------------------------------------- completion
@@ -452,6 +460,7 @@ connection.onDidChangeWatchedFiles(async change => {
     .map(event => toFsPath(event.uri))
     .filter((p): p is string => p !== undefined);
   for (const file of paths) await project.fileChanged(file);
+  refreshProjectDiagnostics();
 });
 
 /**
@@ -479,7 +488,8 @@ connection.onInitialized(() => {
  */
 documents.onDidSave(event => {
   const file = toFsPath(event.document.uri);
-  if (file) void project.fileChanged(file);
+  if (!file) return;
+  void project.fileChanged(file).then(() => refreshProjectDiagnostics());
 });
 
 // ----------------------------------------------------------- document symbols
@@ -767,6 +777,9 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
 
 // --------------------------------------------------------------- diagnostics
 
+/** The one source string both lexical and project diagnostics report under. */
+const DIAGNOSTIC_SOURCE = 'dyalog-apl';
+
 const OPENERS: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
 const CLOSERS = new Set([')', ']', '}']);
 
@@ -837,17 +850,94 @@ function diagnostic(line: number, col: number, length: number, message: string):
     severity: DiagnosticSeverity.Error,
     range: Range.create(Position.create(line, col), Position.create(line, col + length)),
     message,
-    source: 'dyalog-apl'
+    source: DIAGNOSTIC_SOURCE
   };
 }
 
-function publishDiagnostics(doc: TextDocument): void {
-  const diagnostics = settings.diagnostics ? analyse(doc) : [];
-  void connection.sendDiagnostics({ uri: doc.uri, diagnostics });
+/**
+ * The project-problem projection, keyed by URI, recomputed whenever the project
+ * model changes rather than on every keystroke.
+ */
+let projectDiagnosticsByUri = new Map<string, ProjectDiagnostic[]>();
+
+/**
+ * URIs that were last published with a project diagnostic. Kept so that when a
+ * conflict is resolved, the file it used to be reported on can be published
+ * again — otherwise the stale error would sit in the editor until restart.
+ */
+let urisWithProjectDiagnostics = new Set<string>();
+
+const PROJECT_SEVERITY: Record<ProjectDiagnostic['severity'], DiagnosticSeverity> = {
+  error: DiagnosticSeverity.Error,
+  warning: DiagnosticSeverity.Warning
+};
+
+function toProjectDiagnostic(entry: ProjectDiagnostic): Diagnostic {
+  const related: DiagnosticRelatedInformation[] = entry.related.map(other => ({
+    location: { uri: pathToFileURL(other.file).href, range: toRange(other.range) },
+    message: other.message
+  }));
+
+  return {
+    severity: PROJECT_SEVERITY[entry.severity],
+    range: toRange(entry.range),
+    message: entry.message,
+    code: entry.code,
+    source: DIAGNOSTIC_SOURCE,
+    relatedInformation: related.length > 0 ? related : undefined
+  };
+}
+
+/**
+ * Publishes everything known about one document at once.
+ *
+ * Lexical and project diagnostics used to be able to erase one another, because
+ * publishDiagnostics replaces a document's whole set. There is therefore exactly
+ * one publisher, and it always sends the union. An empty union is still sent,
+ * which is what clears a diagnostic that no longer applies.
+ */
+function publishFor(uri: string): void {
+  const doc = documents.get(uri);
+  const lexical = doc && settings.diagnostics ? analyse(doc) : [];
+  const project = (projectDiagnosticsByUri.get(uri) ?? []).map(toProjectDiagnostic);
+
+  const diagnostics = [...lexical, ...project].sort((a, b) => {
+    if (a.range.start.line !== b.range.start.line) return a.range.start.line - b.range.start.line;
+    if (a.range.start.character !== b.range.start.character) {
+      return a.range.start.character - b.range.start.character;
+    }
+    const code = `${a.code ?? ''}`.localeCompare(`${b.code ?? ''}`);
+    if (code !== 0) return code;
+    return a.message.localeCompare(b.message);
+  });
+
+  void connection.sendDiagnostics({ uri, diagnostics });
+}
+
+/**
+ * Recomputes the project projection and republishes whatever it touches, plus
+ * anything it used to touch and no longer does.
+ *
+ * The model has already done the work; this only groups its problems by file.
+ */
+function refreshProjectDiagnostics(): void {
+  const byFile = projectDiagnostics(project, liveTextOf);
+
+  const next = new Map<string, ProjectDiagnostic[]>();
+  for (const [file, entries] of byFile) next.set(pathToFileURL(file).href, entries);
+
+  const stale = [...urisWithProjectDiagnostics].filter(uri => !next.has(uri));
+  projectDiagnosticsByUri = next;
+
+  for (const uri of next.keys()) publishFor(uri);
+  // These now publish their lexical diagnostics alone, or an empty set.
+  for (const uri of stale) publishFor(uri);
+
+  urisWithProjectDiagnostics = new Set(next.keys());
 }
 
 documents.onDidChangeContent((event: TextDocumentChangeEvent<TextDocument>) => {
-  publishDiagnostics(event.document);
+  publishFor(event.document.uri);
 });
 
 documents.listen(connection);
