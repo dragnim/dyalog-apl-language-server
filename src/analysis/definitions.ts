@@ -32,7 +32,7 @@ import * as path from 'node:path';
 
 import { extractSymbols, splitLines, type AplSymbol, type SourceRange } from './symbols';
 import { nameAt, isLocallyBound, type NameReference } from './names';
-import type { ProjectModel, ProjectObject } from './project';
+import type { ProjectModel, ProjectNamespace, ProjectObject } from './project';
 
 export interface DefinitionTarget {
   /** The defining file, or undefined when it is the document asked about. */
@@ -132,8 +132,24 @@ function baseNamespace(reference: NameReference, request: DefinitionRequest): st
   return namespace;
 }
 
-/** The definition a cursor points at, or undefined when nothing is certain. */
-export function resolveDefinition(request: DefinitionRequest): DefinitionTarget | undefined {
+/**
+ * What a name resolved to, rather than merely where it lives.
+ *
+ * Semantic tokens need the *kind* of the thing a reference names, and asking a
+ * second resolver would let the two drift apart. So resolution produces an
+ * entity and `resolveDefinition` turns that into a location; there is one
+ * implementation of the scope rules, used by both.
+ */
+export type ResolvedEntity =
+  /** A definition in the document being asked about. */
+  | { kind: 'symbol'; symbol: AplSymbol; file: string | undefined }
+  /** A Link project object, which has source of its own. */
+  | { kind: 'object'; object: ProjectObject }
+  /** A directory-backed namespace, which has no source file. */
+  | { kind: 'namespace'; namespace: ProjectNamespace };
+
+/** The entity a cursor points at, or undefined when nothing is certain. */
+export function resolveEntity(request: DefinitionRequest): ResolvedEntity | undefined {
   const lines = splitLines(request.text);
   const line = lines[request.position.line];
   if (line === undefined) return undefined;
@@ -148,9 +164,7 @@ export function resolveDefinition(request: DefinitionRequest): DefinitionTarget 
     // A definition in this very file wins, and is read from the live text so an
     // unsaved edit navigates correctly.
     const local = uniqueSymbolNamed(request.text, reference.name);
-    if (local) {
-      return { file: request.file, range: local.range, selectionRange: local.selectionRange };
-    }
+    if (local) return { kind: 'symbol', symbol: local, file: request.file };
 
     // Assigned, localised or an argument here: a local, not a project object.
     if (isLocallyBound(reference.name, lines)) return undefined;
@@ -161,8 +175,10 @@ export function resolveDefinition(request: DefinitionRequest): DefinitionTarget 
 
     // The current space only. See the note on ⎕PATH at the top of this file.
     const found = request.project.resolveFrom(request.file, qualify(namespace, reference.name));
-    if (found && 'location' in found) return targetFor(found, request.liveText);
-    return undefined;
+    if (!found) return undefined;
+    return 'location' in found
+      ? { kind: 'object', object: found }
+      : { kind: 'namespace', namespace: found };
   }
 
   // ---- a qualified path
@@ -180,9 +196,30 @@ export function resolveDefinition(request: DefinitionRequest): DefinitionTarget 
   }
 
   const found = request.project.resolveFrom(request.file, qualify(namespace, reference.name));
-  if (found && 'location' in found) return targetFor(found, request.liveText);
+  if (!found) return undefined;
+  return 'location' in found
+    ? { kind: 'object', object: found }
+    : { kind: 'namespace', namespace: found };
+}
 
-  // A directory-backed namespace has no source file to navigate to.
+/**
+ * The definition a cursor points at, or undefined when nothing is certain.
+ *
+ * A directory-backed namespace resolves to no location: it has no source file,
+ * so there is nothing for an editor to open.
+ */
+export function resolveDefinition(request: DefinitionRequest): DefinitionTarget | undefined {
+  const entity = resolveEntity(request);
+  if (!entity) return undefined;
+
+  if (entity.kind === 'symbol') {
+    return {
+      file: entity.file,
+      range: entity.symbol.range,
+      selectionRange: entity.symbol.selectionRange
+    };
+  }
+  if (entity.kind === 'object') return targetFor(entity.object, request.liveText);
   return undefined;
 }
 

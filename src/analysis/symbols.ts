@@ -36,6 +36,11 @@
 
 import { scanLines, splitLines, NAME_PATTERN, type ScannedLine } from './scanner';
 
+/** The masked-line shape bindings.ts needs, without importing the scanner type. */
+export interface ScannedLineLike {
+  code: string;
+}
+
 export type AplSymbolKind = 'tradfn' | 'tradop' | 'dfn' | 'namespace' | 'class' | 'interface';
 
 export interface Position {
@@ -81,7 +86,7 @@ const range = (sl: number, sc: number, el: number, ec: number): SourceRange => (
 
 // ------------------------------------------------------------------ headers
 
-interface HeaderItem {
+export interface HeaderItem {
   /** 'name', 'paren' or 'brace'. */
   type: 'name' | 'paren' | 'brace';
   text: string;
@@ -93,7 +98,7 @@ interface HeaderItem {
  * Splits the signature part of a header into its top-level items, keeping the
  * column of each so a name can be pointed at afterwards.
  */
-function topLevelItems(text: string, offset: number): HeaderItem[] | undefined {
+export function topLevelItems(text: string, offset: number): HeaderItem[] | undefined {
   const items: HeaderItem[] = [];
   let i = 0;
 

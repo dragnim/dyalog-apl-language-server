@@ -40,11 +40,11 @@
 import { scanLines, NAME_CHARS, NAME_FIRST_CHARS } from './scanner';
 import {
   extractSymbols,
-  parseHeader,
   splitLines,
   type AplSymbol,
   type SourceRange
 } from './symbols';
+import { analyseHeader, localsLineBindings, boundNames } from './bindings';
 import { nameAt } from './names';
 
 export type LocaliseRefusalReason =
@@ -176,61 +176,6 @@ export function assignmentTargets(code: string): string[] {
   return targets;
 }
 
-interface HeaderFacts {
-  /** Result, arguments, operands, the operation itself and any line-[0] locals. */
-  bound: Set<string>;
-  /** Column just past the last code character, before any trailing comment. */
-  insertColumn: number;
-  /** The operation's own name. */
-  operationName: string;
-}
-
-/** Reads what line [0] binds, and where a new local would go. */
-function readHeader(code: string): HeaderFacts | undefined {
-  const parsed = parseHeader(code);
-  if (!parsed) return undefined;
-
-  // A diamond on the header line is not a form this edits.
-  if (code.includes('⋄')) return undefined;
-
-  const bound = new Set<string>(code.match(NAME_GLOBAL) ?? []);
-
-  // The insertion point is the end of the code, so a trailing comment — masked
-  // to blanks by the scanner — and its spacing both survive untouched.
-  let insertColumn = code.length;
-  while (insertColumn > 0 && /\s/.test(code[insertColumn - 1])) insertColumn--;
-
-  return { bound, insertColumn, operationName: parsed.name };
-}
-
-/**
- * Names localised on Locals Lines, and where they stop.
- *
- * A Locals Line starts with `;` after optional whitespace. They may be
- * interspersed with blank and comment-only lines, and end at the first
- * executable statement.
- */
-function readLocalsLines(
-  masked: { text: string; code: string }[],
-  from: number,
-  to: number
-): { bound: Set<string>; firstStatement: number } {
-  const bound = new Set<string>();
-  let line = from;
-
-  for (; line < to; line++) {
-    const code = masked[line].code;
-    const trimmed = code.trim();
-
-    if (trimmed === '') continue; // blank, or a comment-only line
-    if (!trimmed.startsWith(';')) break; // the first executable statement
-
-    for (const name of code.match(NAME_GLOBAL) ?? []) bound.add(name);
-  }
-
-  return { bound, firstStatement: line };
-}
-
 /** Brace depth at the start of each line of a region, plus a per-line walker. */
 function braceDepths(masked: { code: string }[], from: number, to: number): number[] {
   const depths: number[] = [];
@@ -319,16 +264,16 @@ export function planLocalise(request: LocaliseRequest): LocalisePlan | LocaliseR
   }
 
   const headerLine = enclosing.range.start.line;
-  const header = readHeader(masked[headerLine].code);
+  const header = analyseHeader(masked[headerLine].code, headerLine);
   if (!header) {
     return refuse('unreadable-header', 'That definition header cannot be read with confidence.');
   }
 
   const bodyFrom = headerLine + 1;
   const bodyTo = enclosing.range.end.line + 1;
-  const localsLines = readLocalsLines(masked, bodyFrom, bodyTo);
+  const localsLines = localsLineBindings(masked, bodyFrom, bodyTo);
 
-  if (header.bound.has(reference.name) || localsLines.bound.has(reference.name)) {
+  if (boundNames(header, localsLines.bindings).has(reference.name)) {
     return refuse(
       'already-bound',
       `${reference.name} is already a result, argument, operand or local of ${header.operationName}.`
@@ -375,9 +320,14 @@ export function planLocalise(request: LocaliseRequest): LocalisePlan | LocaliseR
     }
   }
 
+  // The end of the header's code, so a trailing comment and its spacing survive.
+  const headerCode = masked[headerLine].code;
+  let insertColumn = headerCode.length;
+  while (insertColumn > 0 && /\s/.test(headerCode[insertColumn - 1])) insertColumn--;
+
   return {
     name: reference.name,
-    insertAt: { line: headerLine, character: header.insertColumn },
+    insertAt: { line: headerLine, character: insertColumn },
     insertText: `;${reference.name}`,
     definitionName: header.operationName,
     candidateRange: reference.range

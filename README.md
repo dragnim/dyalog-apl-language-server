@@ -13,13 +13,16 @@ works before you have installed one.
 language server over LSP, and reach every editor equally. So will the navigation
 and refactoring features that come next.
 
-**Syntax highlighting is separate.** It comes from the TextMate grammar in
-`syntaxes/`, which the VS Code extension bundles — the server does not implement
-LSP semantic tokens, so highlighting is editor integration rather than something
-LSP delivers. Most editors already have APL syntax support of their own; the
-grammar can also be pointed at directly by anything that reads TextMate
-grammars. Making highlighting an LSP feature is tracked in
-[#15](https://github.com/dragnim/dyalog-apl-language-server/issues/15).
+**Highlighting comes in two layers.** The TextMate grammar in `syntaxes/`, which
+the VS Code extension bundles, colours the lexical surface: comments, character
+literals, numbers, primitives, colon words and punctuation. Most other editors
+already have APL syntax support of their own, and the grammar can be pointed at
+directly by anything that reads TextMate grammars.
+
+On top of that the server sends **semantic tokens** over LSP, which every editor
+gets. Those carry only what the server has actually established — see
+Semantic highlighting below. The two are complementary: semantic tokens do not
+make the grammar unnecessary and are not a second lexer.
 
 Everything it knows is derived from your source tree, so it behaves identically
 on any machine and in any LSP-capable editor. Not requiring an interpreter is a
@@ -48,7 +51,7 @@ Recognised file extensions: `.apl`, `.aplf`, `.apla`, `.aplc`, `.apli`, `.apln`,
 ## Features
 
 Everything in this section is delivered over LSP, so every editor gets it,
-except syntax highlighting where noted.
+except the TextMate grammar where noted.
 
 **Glyph completion.** Type `` ` `` for the glyph list, filtered as you type, so
 `` `r `` gives `⍴`. Type it twice for a name search: ` ``rho `, ` ``shape ` and
@@ -108,6 +111,16 @@ illegal replacement names and provable collisions are refused with a reason
 rather than guessed at. Objects named only by their filename, such as a bare dfn
 in a `.aplf`, are refused too: there is no name in the source to edit.
 
+**Semantic highlighting.** Adds the static meaning the grammar cannot know:
+which `∇` definition is an operator rather than a function, which names are
+arguments, locals and results and where each is bound, and that the `Stats` in
+`#.Stats.Mean` really is a namespace rather than the left operand of an inner
+product. A name bound by the enclosing definition is coloured as that binding,
+so an argument called `Mean` is a parameter and not the project function of the
+same name. Anything the server cannot resolve gets no token at all, and
+primitives, `⎕`-names, colon words, comments and literals are left to the
+grammar.
+
 **Code actions.** One so far, and APL-specific: **Localise Variable**. With the
 cursor on a variable assigned inside a traditional function or operator, the
 editor can add it to the header's local list — `∇R←Foo X` becomes
@@ -134,10 +147,12 @@ filenames, and refuses to guess where a source tree is contradictory.
 Go to definition, find references, rename and workspace symbols are all built
 on this.
 
-**Syntax highlighting — VS Code, via the bundled grammar rather than LSP.**
+**Lexical syntax highlighting — the bundled TextMate grammar, not LSP.**
 Comments, character literals, numbers, system names, control structures, labels
 and dfn arguments, with primitives coloured by category so functions and
-operators are visually distinct. It does not impose an editor font.
+operators are visually distinct. It does not impose an editor font. This is the
+layer semantic tokens sit on top of rather than replace, and it is also what an
+editor without semantic token support falls back to.
 
 ## Installing
 
@@ -213,6 +228,9 @@ refuses outright when the target is ambiguous, the new name is not a legal
 Dyalog name, or the rename would collide with something the project model can
 see. A refused rename is the intended behaviour, not a gap.
 
+Semantic tokens follow the same rule: a name the resolver cannot settle is left
+uncoloured rather than guessed at, and `foo bar baz` produces no tokens at all.
+
 Project diagnostics are narrow for the same reason. The model records three
 kinds of problem and only one of them is reported: two files claiming one name,
 which Link states is an error. A filename disagreeing with a script's declared
@@ -265,6 +283,7 @@ npm run rename           # rename safety, refusals and collisions
 npm run workspace        # workspace symbol catalogue, queries and dedup
 npm run localise         # the Localise Variable action, and what it refuses
 npm run projectdiag      # which project problems become diagnostics, and which not
+npm run semantic         # semantic token classification, shadowing and omission
 npm run gen:keyboard     # regenerate the keyboard tables from pinned RIDE
 npm run gen:grammar      # regenerate the grammar's keyword rule
 ```
@@ -297,6 +316,8 @@ src/analysis/rename.ts       whether a rename is safe, and the edits if it is
 src/analysis/workspace-symbols.ts  the searchable catalogue of definitions
 src/analysis/localise.ts     whether a name can be localised, and the edit
 src/analysis/project-diagnostics.ts  which project problems are user-facing errors
+src/analysis/bindings.ts     what a ∇ header binds: results, parameters, locals
+src/analysis/semantic-tokens.ts  static meaning for semantic highlighting
 src/glyphs.ts          glyph and system name data
 src/control-words.ts   the authoritative colon word list, with contexts
 src/keyboard.ts        generated prefix keyboard tables, 13 locales
@@ -316,6 +337,7 @@ test/rename.mjs        rename eligibility, refusals, collisions and edits
 test/workspace-symbols.mjs  the catalogue, query matching and deduplication
 test/localise.mjs      the Localise Variable action, applied and compared
 test/project-diagnostics.mjs  the diagnostic projection, and what it withholds
+test/semantic-tokens.mjs  token classification, shadowing, ordering and overlap
 ```
 
 Everything editor-specific is confined to `src/extension.ts`, which does little

@@ -30,6 +30,9 @@ import {
   RenameParams,
   ResponseError,
   SymbolInformation,
+  SemanticTokens,
+  SemanticTokensBuilder,
+  SemanticTokensParams,
   SymbolKind,
   TextDocumentEdit,
   TextEdit,
@@ -61,6 +64,12 @@ import { resolveDefinition } from './analysis/definitions';
 import { findReferences } from './analysis/references';
 import { planRename, computeRename, isRefusal } from './analysis/rename';
 import { planLocalise, isLocaliseRefusal } from './analysis/localise';
+import {
+  semanticOccurrences,
+  encodeModifiers,
+  TOKEN_TYPES,
+  TOKEN_MODIFIERS
+} from './analysis/semantic-tokens';
 import {
   projectDiagnostics,
   type ProjectDiagnostic
@@ -237,6 +246,13 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       renameProvider: { prepareProvider: true },
       workspaceSymbolProvider: true,
       codeActionProvider: { codeActionKinds: [CodeActionKind.RefactorRewrite] },
+      semanticTokensProvider: {
+        legend: { tokenTypes: [...TOKEN_TYPES], tokenModifiers: [...TOKEN_MODIFIERS] },
+        // A whole-document provider only. Deltas and ranges are not implemented,
+        // and claiming them would have clients ask for something unanswerable.
+        full: true,
+        range: false
+      },
       workspace: {
         workspaceFolders: { supported: true, changeNotifications: true }
       }
@@ -773,6 +789,41 @@ connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
       }
     }
   ];
+});
+
+// ---------------------------------------------------------- semantic tokens
+
+/**
+ * Semantic tokens. All the judgement is in analysis/semantic-tokens.ts; this
+ * encodes its plain occurrences using the library's builder, so the delta
+ * encoding the protocol wants is not hand-rolled here.
+ *
+ * These supplement the TextMate grammar rather than replacing it: the grammar
+ * still colours comments, literals, numbers, primitives and colon words, and
+ * this adds only the static meaning the server has established.
+ */
+connection.languages.semanticTokens.on((params: SemanticTokensParams): SemanticTokens => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return { data: [] };
+
+  const occurrences = semanticOccurrences({
+    text: doc.getText(),
+    file: toFsPath(params.textDocument.uri),
+    project,
+    liveText: liveTextOf
+  });
+
+  const builder = new SemanticTokensBuilder();
+  for (const occurrence of occurrences) {
+    builder.push(
+      occurrence.line,
+      occurrence.startCharacter,
+      occurrence.length,
+      TOKEN_TYPES.indexOf(occurrence.type),
+      encodeModifiers(occurrence.modifiers)
+    );
+  }
+  return builder.build();
 });
 
 // --------------------------------------------------------------- diagnostics

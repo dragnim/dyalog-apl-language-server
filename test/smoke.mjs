@@ -1073,6 +1073,133 @@ check(
   (await codeActionsAt(1, 3, ['source.organizeImports'])).length === 0
 );
 
+// ---------------------------------------------------------- semantic tokens
+
+section('semantic tokens');
+
+const LEGEND_TYPES = [
+  'namespace',
+  'class',
+  'interface',
+  'function',
+  'operator',
+  'variable',
+  'parameter'
+];
+const LEGEND_MODIFIERS = ['declaration', 'definition'];
+
+check(
+  'semanticTokensProvider advertises the exact legend',
+  JSON.stringify(init.capabilities?.semanticTokensProvider?.legend) ===
+    JSON.stringify({ tokenTypes: LEGEND_TYPES, tokenModifiers: LEGEND_MODIFIERS }),
+  JSON.stringify(init.capabilities?.semanticTokensProvider?.legend)
+);
+check(
+  'a full-document provider is claimed',
+  init.capabilities?.semanticTokensProvider?.full === true,
+  JSON.stringify(init.capabilities?.semanticTokensProvider?.full)
+);
+check(
+  'and range is not, since it is not implemented',
+  init.capabilities?.semanticTokensProvider?.range === false,
+  JSON.stringify(init.capabilities?.semanticTokensProvider?.range)
+);
+
+const semanticUri = pathToFileURL(path.join(workspace, 'Stats', 'Semantic.aplf')).href;
+const SEMANTIC_SOURCE = [
+  '∇R←Semantic X;Temp',
+  ' Temp←X',
+  ' R←#.Stats.Mean Temp',
+  ' ⍝ Temp Mean',
+  '∇'
+].join('\n');
+
+send({
+  method: 'textDocument/didOpen',
+  params: {
+    textDocument: { uri: semanticUri, languageId: 'apl', version: 1, text: SEMANTIC_SOURCE }
+  }
+});
+await new Promise(resolve => setTimeout(resolve, 300));
+
+const encoded = await request('textDocument/semanticTokens/full', {
+  textDocument: { uri: semanticUri }
+});
+
+/** Decodes LSP's five-integer delta encoding back into absolute tokens. */
+function decodeTokens(data, source) {
+  const lines = source.split('\n');
+  const out = [];
+  let line = 0;
+  let character = 0;
+  for (let i = 0; i < data.length; i += 5) {
+    const [deltaLine, deltaStart, length, type, modifiers] = data.slice(i, i + 5);
+    line += deltaLine;
+    character = deltaLine === 0 ? character + deltaStart : deltaStart;
+    const names = LEGEND_MODIFIERS.filter((_, bit) => (modifiers >> bit) & 1);
+    out.push({
+      line,
+      character,
+      length,
+      text: lines[line].slice(character, character + length),
+      type: LEGEND_TYPES[type],
+      modifiers: names
+    });
+  }
+  return out;
+}
+
+check('the response carries encoded data', Array.isArray(encoded?.data), JSON.stringify(encoded));
+check(
+  'the data length is a multiple of five',
+  (encoded?.data?.length ?? 1) % 5 === 0,
+  String(encoded?.data?.length)
+);
+
+const decoded = decodeTokens(encoded?.data ?? [], SEMANTIC_SOURCE);
+const decodedShape = decoded.map(
+  t => `${t.line}:${t.character}:${t.text}:${t.type}${t.modifiers.length ? '+' + t.modifiers.join(',') : ''}`
+);
+
+check(
+  'decoding the array gives exactly the expected tokens',
+  decodedShape.join(' ') ===
+    '0:1:R:variable+declaration 0:3:Semantic:function+declaration,definition ' +
+      '0:12:X:parameter+declaration 0:14:Temp:variable+declaration ' +
+      '1:1:Temp:variable 1:6:X:parameter ' +
+      '2:1:R:variable 2:5:Stats:namespace 2:11:Mean:function 2:16:Temp:variable',
+  decodedShape.join(' ')
+);
+check(
+  'the qualified reference is two tokens: a namespace and a function',
+  decodedShape.includes('2:5:Stats:namespace') && decodedShape.includes('2:11:Mean:function'),
+  decodedShape.join(' ')
+);
+check(
+  'the operator/function distinction survives encoding',
+  decoded.find(t => t.text === 'Semantic')?.type === 'function'
+);
+check(
+  'nothing is emitted for the comment line',
+  !decoded.some(t => t.line === 3),
+  JSON.stringify(decoded.filter(t => t.line === 3))
+);
+check(
+  'tokens are sorted and non-overlapping after decoding',
+  decoded.every((token, index) => {
+    if (index === 0) return true;
+    const previous = decoded[index - 1];
+    if (token.line !== previous.line) return token.line > previous.line;
+    return previous.character + previous.length <= token.character;
+  }),
+  decodedShape.join(' ')
+);
+check(
+  'every decoded type is in the advertised legend',
+  decoded.every(t => LEGEND_TYPES.includes(t.type)),
+  JSON.stringify(decoded.map(t => t.type))
+);
+
 // ------------------------------------------------------- project diagnostics
 
 section('project diagnostics');
