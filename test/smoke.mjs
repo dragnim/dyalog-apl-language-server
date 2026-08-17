@@ -291,6 +291,72 @@ check(
   `got ${JSON.stringify(notMatch?.filterText)}`
 );
 
+// --------------------------------------- regression cover for issue #8 / PR #19
+
+section('underscore and quote carry real metadata (#8, PR #19)');
+
+/**
+ * These two characters had keyboard mappings but no GLYPHS entry, so the
+ * completion path fell back to `{ g: char, glyphName: char }` and offered the
+ * character as its own description. PR #19 added the metadata; these assertions
+ * exist so it cannot be lost again.
+ *
+ * The regression is only visible through the whole chain — keyboard table →
+ * glyphFor → glyphItem → what the user reads — so it is checked on a real
+ * completion response rather than against the GLYPHS array.
+ *
+ * `_` is prefix-f and `'` is prefix-k in the generated tables for both en_US and
+ * en_GB, so this session's en_GB locale is authoritative for them.
+ */
+const underscore = byKey.find(i => i.label === '_');
+const quote = byKey.find(i => i.label === "'");
+
+check('`f offers _', underscore?.filterText === '`f', JSON.stringify(underscore));
+check('the edit inserts _', underscore?.textEdit?.newText === '_', JSON.stringify(underscore?.textEdit));
+check(
+  'its detail names it Underscore',
+  underscore?.detail?.includes('Underscore') === true,
+  JSON.stringify(underscore?.detail)
+);
+check(
+  'and is not the generic fallback that just repeats the character',
+  underscore?.detail !== '_' && underscore?.detail !== undefined,
+  `detail was ${JSON.stringify(underscore?.detail)}`
+);
+check(
+  'its documentation names it too',
+  underscore?.documentation?.value?.includes('Underscore') === true,
+  JSON.stringify(underscore?.documentation?.value)
+);
+
+check('`k offers the quote', quote?.filterText === '`k', JSON.stringify(quote));
+check("the edit inserts '", quote?.textEdit?.newText === "'", JSON.stringify(quote?.textEdit));
+check(
+  'its detail names it Quote',
+  quote?.detail?.includes('Quote') === true,
+  JSON.stringify(quote?.detail)
+);
+check(
+  'and is not the generic fallback',
+  quote?.detail !== "'" && quote?.detail !== undefined,
+  `detail was ${JSON.stringify(quote?.detail)}`
+);
+check(
+  'it explains that the quote delimits a character vector',
+  /character vector/i.test(quote?.detail ?? ''),
+  JSON.stringify(quote?.detail)
+);
+check(
+  'and mentions doubling it for a literal apostrophe',
+  /two in a row|apostrophe/i.test(quote?.detail ?? ''),
+  JSON.stringify(quote?.detail)
+);
+check(
+  'its documentation names it too',
+  quote?.documentation?.value?.includes('Quote') === true,
+  JSON.stringify(quote?.documentation?.value)
+);
+
 // --------------------------------------------------------- name completion
 
 section('name search completion');
