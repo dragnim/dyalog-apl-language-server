@@ -291,6 +291,125 @@ check(
   `got ${JSON.stringify(notMatch?.filterText)}`
 );
 
+// ------------------------------------------------- alias search for #16 / PR #19
+
+section('name search still finds the PR #19 glyphs by alias');
+
+// A separate document, so adding these cannot shift the line numbers the other
+// completion assertions depend on.
+const aliasUri = 'file:///tmp/aliases.aplf';
+const ALIAS_SOURCE = ['a←``underscore', 'b←``quote', 'c←``apostrophe', 'd←``rho'].join('\n');
+send({
+  method: 'textDocument/didOpen',
+  params: { textDocument: { uri: aliasUri, languageId: 'apl', version: 1, text: ALIAS_SOURCE } }
+});
+await new Promise(resolve => setTimeout(resolve, 200));
+
+const aliasSearch = async (line, character, glyph) => {
+  const items = await request('textDocument/completion', {
+    textDocument: { uri: aliasUri },
+    position: { line, character }
+  });
+  return (items ?? []).find(i => i.label === glyph);
+};
+
+const byUnderscore = await aliasSearch(0, 14, '_');
+check(
+  '``underscore offers _ with matching filter text',
+  byUnderscore?.filterText === '``underscore',
+  JSON.stringify(byUnderscore)
+);
+check(
+  'and it carries the Underscore metadata, not the fallback',
+  byUnderscore?.detail === 'Underscore — Valid in names',
+  JSON.stringify(byUnderscore?.detail)
+);
+
+const byQuote = await aliasSearch(1, 9, "'");
+check("``quote offers '", byQuote?.filterText === '``quote', JSON.stringify(byQuote));
+check(
+  'with the character-vector description',
+  /character vector/.test(byQuote?.detail ?? ''),
+  JSON.stringify(byQuote?.detail)
+);
+
+const byApostrophe = await aliasSearch(2, 14, "'");
+check(
+  "``apostrophe offers ' too, via its secondary alias",
+  byApostrophe?.filterText === '``apostrophe',
+  JSON.stringify(byApostrophe)
+);
+
+const byRho = await aliasSearch(3, 8, '⍴');
+check('``rho still offers ⍴', byRho?.filterText === '``rho', JSON.stringify(byRho));
+check(
+  'and still reads Rho — Shape / Reshape',
+  byRho?.detail === 'Rho — Shape / Reshape',
+  JSON.stringify(byRho?.detail)
+);
+
+// ------------------------------------------- completion kinds by category (#16)
+
+section('completion kinds reflect what a glyph is (#16)');
+
+/** CompletionItemKind, from the LSP specification. */
+const COMPLETION_KIND = { Text: 1, Function: 3, Constant: 21, Variable: 6, Keyword: 14, Operator: 24 };
+
+const kindOf = char => byKey.find(i => i.label === char)?.kind;
+
+check(
+  'a primitive function is a Function',
+  kindOf('⍴') === COMPLETION_KIND.Function,
+  `⍴ was ${kindOf('⍴')}`
+);
+check(
+  'an operator is an Operator',
+  kindOf('¨') === COMPLETION_KIND.Operator,
+  `¨ was ${kindOf('¨')}`
+);
+check(
+  'a syntax glyph is a Keyword, not an Operator',
+  kindOf('⍝') === COMPLETION_KIND.Keyword,
+  `⍝ was ${kindOf('⍝')}`
+);
+check(
+  'assignment is a Keyword too',
+  kindOf('←') === COMPLETION_KIND.Keyword,
+  `← was ${kindOf('←')}`
+);
+check(
+  'a name character is Text',
+  kindOf('_') === COMPLETION_KIND.Text,
+  `_ was ${kindOf('_')}`
+);
+check(
+  'a dfn argument symbol is a Variable',
+  kindOf('⍵') === COMPLETION_KIND.Variable,
+  `⍵ was ${kindOf('⍵')}`
+);
+check(
+  'zilde is a Constant',
+  kindOf('⍬') === COMPLETION_KIND.Constant,
+  `⍬ was ${kindOf('⍬')}`
+);
+
+// The reason #16 exists: these used to be the same kind as each other.
+check(
+  'function, operator, syntax and name character are four different kinds',
+  new Set([kindOf('⍴'), kindOf('¨'), kindOf('⍝'), kindOf('_')]).size === 4,
+  JSON.stringify([kindOf('⍴'), kindOf('¨'), kindOf('⍝'), kindOf('_')])
+);
+check(
+  'and not everything is an Operator any more',
+  byKey.filter(i => i.kind === COMPLETION_KIND.Operator).length < byKey.length,
+  `${byKey.filter(i => i.kind === COMPLETION_KIND.Operator).length} of ${byKey.length} are Operator`
+);
+check(
+  'every offered glyph has some kind',
+  byKey.every(i => typeof i.kind === 'number'),
+  JSON.stringify(byKey.filter(i => typeof i.kind !== 'number').map(i => i.label))
+);
+
 // --------------------------------------- regression cover for issue #8 / PR #19
 
 section('underscore and quote carry real metadata (#8, PR #19)');

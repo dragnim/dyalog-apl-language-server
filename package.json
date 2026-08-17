@@ -90,7 +90,7 @@
     "smoke": "node test/smoke.mjs",
     "grammar": "node test/highlight.mjs",
     "controlwords": "node test/controlwords.mjs",
-    "test": "npm run smoke && npm run grammar && npm run controlwords && npm run symbols && npm run project && npm run definition && npm run references && npm run rename && npm run workspace && npm run localise && npm run projectdiag && npm run semantic",
+    "test": "npm run smoke && npm run grammar && npm run controlwords && npm run symbols && npm run project && npm run definition && npm run references && npm run rename && npm run workspace && npm run localise && npm run projectdiag && npm run semantic && npm run glyphs",
     "gen:keyboard": "node tools/gen-keyboard.mjs",
     "gen:grammar": "npm run build && node tools/gen-grammar.mjs",
     "symbols": "node test/symbols.mjs",
@@ -101,7 +101,8 @@
     "workspace": "node test/workspace-symbols.mjs",
     "localise": "node test/localise.mjs",
     "projectdiag": "node test/project-diagnostics.mjs",
-    "semantic": "node test/semantic-tokens.mjs"
+    "semantic": "node test/semantic-tokens.mjs",
+    "glyphs": "node test/glyph-metadata.mjs"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

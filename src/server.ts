@@ -49,6 +49,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   GLYPHS,
   SYSTEM_NAMES,
+  type GlyphCategory,
   glyphFor,
   systemNameFor,
   describe,
@@ -284,6 +285,26 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * How a glyph's category becomes a completion kind. LSP has no APL-shaped kinds,
+ * so each is the closest truthful standard one; every glyph used to be emitted as
+ * Operator, which made a function, a comment marker and a name character
+ * indistinguishable in the editor's list.
+ *
+ * `argument` maps to Variable because ⍺ and ⍵ genuinely are the argument
+ * variables of a dfn. `name-character` maps to Text because there is no better
+ * standard kind for "a character that is legal inside a name" — Text is the
+ * honest answer rather than a flattering one.
+ */
+const GLYPH_COMPLETION_KINDS: Record<GlyphCategory, CompletionItemKind> = {
+  function: CompletionItemKind.Function,
+  operator: CompletionItemKind.Operator,
+  syntax: CompletionItemKind.Keyword,
+  argument: CompletionItemKind.Variable,
+  constant: CompletionItemKind.Constant,
+  'name-character': CompletionItemKind.Text
+};
+
 function glyphItem(
   glyph: (typeof GLYPHS)[number],
   range: Range,
@@ -292,7 +313,7 @@ function glyphItem(
 ): CompletionItem {
   return {
     label: glyph.g,
-    kind: CompletionItemKind.Operator,
+    kind: GLYPH_COMPLETION_KINDS[glyph.category],
     detail: shortDescribe(glyph),
     documentation: {
       kind: MarkupKind.Markdown,
@@ -365,7 +386,11 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] => {
     const table = glyphsForLocale(settings.keyboardLocale);
     return Object.entries(table)
       .map(([char, key]) => {
-        const glyph = glyphFor(char) ?? { g: char, glyphName: char, names: [char] };
+        const glyph =
+          glyphFor(char) ??
+          // No metadata for this character: say only what is certain, which is the
+          // character itself. See issue #8 for what this fallback used to hide.
+          { g: char, glyphName: char, names: [char], category: 'syntax' as const };
         return glyphItem(glyph, range, `${settings.prefixKey}${key}`, key);
       });
   }
