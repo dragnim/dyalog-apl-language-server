@@ -128,7 +128,9 @@ export const GLYPHS: Glyph[] = [
   { g: '⍬', glyphName: 'Zilde', names: ['zilde', 'empty'], mon: 'Empty numeric vector' },
   { g: '¯', glyphName: 'Macron', names: ['macron', 'highminus', 'negative'], mon: 'Negative number prefix' },
   { g: '∆', glyphName: 'Delta', names: ['delta'], mon: 'Valid in names' },
-  { g: '⍙', glyphName: 'Delta Underbar', names: ['deltaunderbar'], mon: 'Valid in names' }
+  { g: '⍙', glyphName: 'Delta Underbar', names: ['deltaunderbar'], mon: 'Valid in names' },
+  { g: '_', glyphName: 'Underscore', names: ['underscore'], mon: 'Valid in names' },
+  { g: "'", glyphName: 'Quote', names: ['quote', 'apostrophe'], mon: 'Delimits a character vector (string); write two in a row for a literal apostrophe' }
 ];
 
 /**
